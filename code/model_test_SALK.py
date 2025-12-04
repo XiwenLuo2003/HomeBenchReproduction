@@ -18,7 +18,35 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 
-# --- 辅助函数：将 JSON 状态转换为字符串 (无过滤，全量转换) ---
+# --- 全局房间列表 ---
+ALL_ROOMS = [
+    "master bedroom", "guest bedroom", "living room", "dining room", "ding room", # 兼容拼写
+    "study room", "kitchen", "bathroom", "foyer", "corridor",
+    "balcony", "garage", "store room"
+]
+
+# --- 强力系统提示词 (关键修复：防止废话和幻觉) ---
+STRICT_SYSTEM_PROMPT = """You are a smart home control agent. 
+Your task is to convert User Instructions into executable Python-style API calls based on the provided Home State and Device Methods.
+
+RULES:
+1. ONLY output the API calls. Do NOT output explanations, comments, or conversational text.
+2. If a user instruction cannot be executed (e.g., device not found, attribute not supported), output exactly: error_input
+3. Separate multiple commands with commas or newlines.
+4. Output format example: living_room.light.turn_on(), bedroom.ac.set_temperature(26)
+5. Do not include markdown code blocks (```). Just the raw text.
+"""
+
+# --- 辅助函数：从用户输入中提取相关房间 ---
+def extract_rooms_from_input(user_input, all_rooms_list):
+    found_rooms = set()
+    for room in all_rooms_list:
+        # 使用正则表达式进行不区分大小写的全词匹配
+        if re.search(r'\b' + re.escape(room) + r'\b', user_input, re.IGNORECASE):
+            found_rooms.add(room)
+    return found_rooms
+
+# --- 辅助函数：转换 JSON 为字符串 ---
 def chang_json2str(state, methods):
     state_str = ""
     for room in state.keys():
@@ -77,36 +105,54 @@ class no_few_shot_home_assistant_dataset(Dataset):
         with open(os.path.join(dataset_dir, "home_status_method.jsonl"), "r") as f_home:
             lines_home = f_home.readlines()
         
-        home_status = {}
+        home_status_full = {} 
         for line in lines_home:
             data = json.loads(line)
-            home_status[data["home_id"]] = {"home_status": data["home_status"], "method": data["method"]}
-        
-        # 读取 System Prompt
-        with open(os.path.join(code_dir, "system.txt"), "r") as f:
-            self.system_prompt = f.read()
+            home_status_full[data["home_id"]] = {"home_status": data["home_status"], "method": data["method"]}
         
         self.data = []
         for i in range(len(lines)):
             try:
                 case = json.loads(lines[i])
-                if case["home_id"] not in home_status: continue
+                if case["home_id"] not in home_status_full: continue
+
+                # --- SALK Logic ---
+                user_input = case["input"]
+                relevant_rooms = extract_rooms_from_input(user_input, ALL_ROOMS)
+
+                # 兜底逻辑：如果没找到房间（隐式指令），使用全量数据
+                if not relevant_rooms:
+                    relevant_rooms = set(home_status_full[case["home_id"]]["home_status"].keys())
+
+                current_home_data = home_status_full[case["home_id"]]
+                full_state = current_home_data["home_status"]
+                full_methods = current_home_data["method"]
+
+                filtered_state = {}
+                for room_name, room_data in full_state.items():
+                    # VacuumRobot 始终保留
+                    if room_name in relevant_rooms or room_name == "VacuumRobot": 
+                        filtered_state[room_name] = room_data
+
+                filtered_methods = []
+                for method_entry in full_methods:
+                    # VacuumRobot (None) 始终保留
+                    if method_entry["room_name"] in relevant_rooms or method_entry["room_name"] == "None": 
+                        filtered_methods.append(method_entry)
                 
-                # 直接转换全量数据，不进行 SALK 过滤
-                state_str, method_str = chang_json2str(home_status[case["home_id"]]["home_status"], home_status[case["home_id"]]["method"])
+                state_str, method_str = chang_json2str(filtered_state, filtered_methods)
                 
-                # --- 构造 User Content (仅包含上下文和指令) ---
-                # 修复点：将 System 和 User 内容分开，而不是拼接在一起作为 System
+                # --- 构造清晰的 User Content ---
                 home_status_case = "<home_state>\n  The following provides the status of all devices in each room of the current household, the adjustable attributes of each device, and the threshold values for adjustable attributes:"+ state_str + "\n" + "</home_state>\n"
                 device_method_case = "<device_method>\n     The following provides the methods to control each device in the current household:"+ method_str + "\n" + "</device_method>\n"
                 
-                user_instruction_case = "-------------------------------\n" + "Here are the user instructions you need to reply to.\n" + "<User instructions:> \n" + case["input"] + "\n" + "<Machine instructions:>"
+                user_instruction_case = "-------------------------------\n" + "Here are the user instructions you need to reply to.\n" + "<User instructions:> \n" + user_input + "\n" + "<Machine instructions:>"
                 
                 user_content = home_status_case + device_method_case + user_instruction_case
                 
                 self.data.append({
-                    "system": self.system_prompt,
-                    "user": user_content,
+                    "system": STRICT_SYSTEM_PROMPT,
+                    "user": user_content, 
                     "output": case["output"]
                 })
             except Exception as e:
@@ -118,8 +164,6 @@ class no_few_shot_home_assistant_dataset(Dataset):
 
     def __getitem__(self, idx):
         item = self.data[idx]
-        
-        # 修复点：使用标准 Chat 列表结构
         messages = [
             {"role": "system", "content": item["system"]},
             {"role": "user", "content": item["user"]}
@@ -127,7 +171,6 @@ class no_few_shot_home_assistant_dataset(Dataset):
         output_text = item["output"]
         
         if hasattr(self.tokenizer, "apply_chat_template") and self.tokenizer.chat_template:
-            # 自动添加生成引导符 (e.g., <|im_start|>assistant)
             inputs_id = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
         else:
             inputs_id = item["system"] + "\n\n" + item["user"]
@@ -146,10 +189,10 @@ class home_assistant_dataset(Dataset):
         with open(os.path.join(dataset_dir, "home_status_method.jsonl"), "r") as f_home:
             lines_home = f_home.readlines()
         
-        home_status = {}
+        home_status_full = {}
         for line in lines_home:
             data = json.loads(line)
-            home_status[data["home_id"]] = {"home_status": data["home_status"], "method": data["method"]}
+            home_status_full[data["home_id"]] = {"home_status": data["home_status"], "method": data["method"]}
         
         ex_path1 = os.path.join(code_dir, "example1.txt")
         ex_path2 = os.path.join(code_dir, "example.txt")
@@ -160,30 +203,44 @@ class home_assistant_dataset(Dataset):
         else:
             examples = ""
 
-        with open(os.path.join(code_dir, "system.txt"), "r") as f:
-            self.system_prompt = f.read()
-        
         self.data = []
         for i in range(len(lines)):
             try:
                 case = json.loads(lines[i])
-                if case["home_id"] not in home_status: continue
+                if case["home_id"] not in home_status_full: continue
                 
-                # 直接转换全量数据
-                state_str, method_str = chang_json2str(home_status[case["home_id"]]["home_status"], home_status[case["home_id"]]["method"])
+                # --- SALK Logic ---
+                user_input = case["input"]
+                relevant_rooms = extract_rooms_from_input(user_input, ALL_ROOMS)
+                if not relevant_rooms:
+                    relevant_rooms = set(home_status_full[case["home_id"]]["home_status"].keys())
+
+                current_home_data = home_status_full[case["home_id"]]
+                full_state = current_home_data["home_status"]
+                full_methods = current_home_data["method"]
+
+                filtered_state = {}
+                for room_name, room_data in full_state.items():
+                    if room_name in relevant_rooms or room_name == "VacuumRobot": 
+                        filtered_state[room_name] = room_data
+
+                filtered_methods = []
+                for method_entry in full_methods:
+                    if method_entry["room_name"] in relevant_rooms or method_entry["room_name"] == "None": 
+                        filtered_methods.append(method_entry)
+
+                state_str, method_str = chang_json2str(filtered_state, filtered_methods)
                 
-                # 构造 Prompt
                 home_status_case = "<home_state>\n  The following provides the status of all devices in each room of the current household, the adjustable attributes of each device, and the threshold values for adjustable attributes:"+ state_str + "\n" + "</home_state>\n"
                 device_method_case = "<device_method>\n     The following provides the methods to control each device in the current household:"+ method_str + "\n" + "</device_method>\n"
                 
-                user_instruction_case = "-------------------------------\n" + "Here are the user instructions you need to reply to.\n" + "<User instructions:> \n" + case["input"] + "\n" + "<Machine instructions:>"
+                user_instruction_case = "-------------------------------\n" + "Here are the user instructions you need to reply to.\n" + "<User instructions:> \n" + user_input + "\n" + "<Machine instructions:>"
                 
-                # Few-shot: Examples 加在 User Content 中
                 user_content = home_status_case + device_method_case + examples + user_instruction_case
                 
                 self.data.append({
-                    "system": self.system_prompt,
-                    "user": user_content,
+                    "system": STRICT_SYSTEM_PROMPT,
+                    "user": user_content, 
                     "output": case["output"]
                 })
             except Exception as e:
@@ -239,7 +296,6 @@ class rag_home_assistant_dataset(Dataset):
 
     def __getitem__(self, idx):
         item = self.data[idx]
-        # RAG 数据已经是生成好的文本，直接返回
         return item["input"], item["output"]
 
 # --- 主测试函数 ---
@@ -327,11 +383,9 @@ def model_test(model_name, use_rag=False, use_few_shot=False, use_finetuned=Fals
         with torch.no_grad():
             logits = model.generate(
                 **inputs,
-                max_new_tokens=512,
-                do_sample=True,
-                temperature=0.1,
-                top_p=0.9,
-                repetition_penalty=1.1, # 修复点：增加重复惩罚
+                max_new_tokens=256,
+                do_sample=False, # 贪婪搜索，更稳定
+                repetition_penalty=1.1, # 核心修复：防止死循环
                 pad_token_id=tokenizer.pad_token_id,
                 eos_token_id=tokenizer.eos_token_id
             )
@@ -354,6 +408,7 @@ def model_test(model_name, use_rag=False, use_few_shot=False, use_finetuned=Fals
     
     mode_suffix = "_".join(mode_parts)
     if test_type and test_type != "normal": mode_suffix += f"_{test_type}"
+    mode_suffix += "_SALK" # 标记
     
     part_file = os.path.join(output_dir, f"{model_name}_{mode_suffix}_part_{rank}.json")
     with open(part_file, "w") as f:

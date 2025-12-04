@@ -33,10 +33,10 @@ HomeBenchReproduction/
 
 ```
 # 单卡训练
-torchrun --nproc_per_node=1 code/sft_fixed.py --model_name qwen --batch_size 4 --grad_accum 16 --cuda_devices "0"
+torchrun --nproc_per_node=1 code/sft_fixed.py --model_name qwen --batch_size 4 --grad_accum 16
 
 # 多卡训练 (DDP)
-torchrun --nproc_per_node=2 code/sft_fixed.py --model_name qwen --batch_size 4 --grad_accum 16 --cuda_devices "0,1"
+torchrun --nproc_per_node=2 code/sft_fixed.py --model_name qwen --batch_size 4 --grad_accum 16
 ```
 
 ## 3. 第二步：模型推理测试
