@@ -17,8 +17,10 @@ from peft import PeftModel
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+# 禁用 Tokenizers 并行，防止 DataLoader 死锁
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-# --- 辅助函数：将 JSON 状态转换为字符串 (无过滤，全量转换) ---
+# --- 辅助函数：将 JSON 状态转换为字符串 ---
 def chang_json2str(state, methods):
     state_str = ""
     for room in state.keys():
@@ -65,7 +67,20 @@ def chang_json2str(state, methods):
         method_str += ");"
     return state_str, method_str
 
-# --- Dataset 类 1: Zero-shot (No Few-Shot) ---
+# --- 辅助函数：应用 Chat 模板 ---
+def apply_chat_template(tokenizer, system, user):
+    """如果 Tokenizer 支持 Chat 模板则使用，否则使用默认拼接"""
+    if hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user}
+        ]
+        return tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+    else:
+        # Fallback format
+        return f"{system}\n\n{user}"
+
+# --- Dataset 类 1: Zero-shot ---
 class no_few_shot_home_assistant_dataset(Dataset):
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
@@ -82,7 +97,6 @@ class no_few_shot_home_assistant_dataset(Dataset):
             data = json.loads(line)
             home_status[data["home_id"]] = {"home_status": data["home_status"], "method": data["method"]}
         
-        # 读取 System Prompt
         with open(os.path.join(code_dir, "system.txt"), "r") as f:
             self.system_prompt = f.read()
         
@@ -92,11 +106,8 @@ class no_few_shot_home_assistant_dataset(Dataset):
                 case = json.loads(lines[i])
                 if case["home_id"] not in home_status: continue
                 
-                # 直接转换全量数据，不进行 SALK 过滤
                 state_str, method_str = chang_json2str(home_status[case["home_id"]]["home_status"], home_status[case["home_id"]]["method"])
                 
-                # --- 构造 User Content (仅包含上下文和指令) ---
-                # 修复点：将 System 和 User 内容分开，而不是拼接在一起作为 System
                 home_status_case = "<home_state>\n  The following provides the status of all devices in each room of the current household, the adjustable attributes of each device, and the threshold values for adjustable attributes:"+ state_str + "\n" + "</home_state>\n"
                 device_method_case = "<device_method>\n     The following provides the methods to control each device in the current household:"+ method_str + "\n" + "</device_method>\n"
                 
@@ -104,10 +115,13 @@ class no_few_shot_home_assistant_dataset(Dataset):
                 
                 user_content = home_status_case + device_method_case + user_instruction_case
                 
+                # 应用 Chat 模板
+                final_input = apply_chat_template(self.tokenizer, self.system_prompt, user_content)
+                
                 self.data.append({
-                    "system": self.system_prompt,
-                    "user": user_content,
-                    "output": case["output"]
+                    "input_text": final_input,
+                    "output": case["output"],
+                    "type": case.get("type", "normal") # 关键修复：保存数据类型
                 })
             except Exception as e:
                 print(f"Error processing line {i}: {e}")
@@ -118,23 +132,10 @@ class no_few_shot_home_assistant_dataset(Dataset):
 
     def __getitem__(self, idx):
         item = self.data[idx]
-        
-        # 修复点：使用标准 Chat 列表结构
-        messages = [
-            {"role": "system", "content": item["system"]},
-            {"role": "user", "content": item["user"]}
-        ]
-        output_text = item["output"]
-        
-        if hasattr(self.tokenizer, "apply_chat_template") and self.tokenizer.chat_template:
-            # 自动添加生成引导符 (e.g., <|im_start|>assistant)
-            inputs_id = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
-        else:
-            inputs_id = item["system"] + "\n\n" + item["user"]
-            
-        return inputs_id, output_text
+        # 返回三元组：输入，标准答案，元数据(类型)
+        return item["input_text"], item["output"], item["type"]
 
-# --- Dataset 类 2: Few-shot (ICL) ---
+# --- Dataset 类 2: Few-shot ---
 class home_assistant_dataset(Dataset):
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
@@ -169,22 +170,20 @@ class home_assistant_dataset(Dataset):
                 case = json.loads(lines[i])
                 if case["home_id"] not in home_status: continue
                 
-                # 直接转换全量数据
                 state_str, method_str = chang_json2str(home_status[case["home_id"]]["home_status"], home_status[case["home_id"]]["method"])
                 
-                # 构造 Prompt
                 home_status_case = "<home_state>\n  The following provides the status of all devices in each room of the current household, the adjustable attributes of each device, and the threshold values for adjustable attributes:"+ state_str + "\n" + "</home_state>\n"
                 device_method_case = "<device_method>\n     The following provides the methods to control each device in the current household:"+ method_str + "\n" + "</device_method>\n"
-                
                 user_instruction_case = "-------------------------------\n" + "Here are the user instructions you need to reply to.\n" + "<User instructions:> \n" + case["input"] + "\n" + "<Machine instructions:>"
                 
-                # Few-shot: Examples 加在 User Content 中
                 user_content = home_status_case + device_method_case + examples + user_instruction_case
                 
+                final_input = apply_chat_template(self.tokenizer, self.system_prompt, user_content)
+
                 self.data.append({
-                    "system": self.system_prompt,
-                    "user": user_content,
-                    "output": case["output"]
+                    "input_text": final_input,
+                    "output": case["output"],
+                    "type": case.get("type", "normal") # 关键修复：保存数据类型
                 })
             except Exception as e:
                 continue
@@ -194,23 +193,22 @@ class home_assistant_dataset(Dataset):
 
     def __getitem__(self, idx):
         item = self.data[idx]
-        messages = [
-            {"role": "system", "content": item["system"]},
-            {"role": "user", "content": item["user"]}
-        ]
-        output_text = item["output"]
-        if hasattr(self.tokenizer, "apply_chat_template") and self.tokenizer.chat_template:
-            inputs_id = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
-        else:
-            inputs_id = item["system"] + "\n\n" + item["user"]
-        return inputs_id, output_text
+        return item["input_text"], item["output"], item["type"]
 
 # --- Dataset 类 3: RAG Mode ---
 class rag_home_assistant_dataset(Dataset):
     def __init__(self, tokenizer, model_name_for_rag):
         self.tokenizer = tokenizer
         dataset_dir = os.path.join(PROJECT_ROOT, "dataset")
+        code_dir = os.path.join(PROJECT_ROOT, "code")
         
+        # 尝试加载 System Prompt
+        sys_path = os.path.join(code_dir, "system.txt")
+        if os.path.exists(sys_path):
+             with open(sys_path, "r") as f: self.system_prompt = f.read()
+        else:
+             self.system_prompt = "You are a smart home assistant."
+
         filename_candidates = [f"{model_name_for_rag}_rag_test_data.json", "rag_test_data.json"]
         rag_path = None
         for fn in filename_candidates:
@@ -232,15 +230,24 @@ class rag_home_assistant_dataset(Dataset):
             
         self.data = []
         for item in raw_data:
-            self.data.append(item)
+            # 确保 RAG 数据也有 System Prompt 包裹
+            if "system" in item["input"]: # 简单判断是否已包含 prompt
+                final_input = item["input"]
+            else:
+                final_input = apply_chat_template(self.tokenizer, self.system_prompt, item["input"])
+
+            self.data.append({
+                "input_text": final_input,
+                "output": item["output"],
+                "type": item.get("type", "normal") # 关键修复：尝试获取 type，如果 RAG 文件里没有则默认为 normal
+            })
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
         item = self.data[idx]
-        # RAG 数据已经是生成好的文本，直接返回
-        return item["input"], item["output"]
+        return item["input_text"], item["output"], item["type"]
 
 # --- 主测试函数 ---
 def model_test(model_name, use_rag=False, use_few_shot=False, use_finetuned=False, test_type=None, batch_size=64):
@@ -276,10 +283,12 @@ def model_test(model_name, use_rag=False, use_few_shot=False, use_finetuned=Fals
     # Tokenizer
     tokenizer_source = adapter_dir if use_finetuned and os.path.exists(os.path.join(adapter_dir, "tokenizer.json")) else base_model_dir
     try:
-        tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, padding_side='left', trust_remote_code=True)
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, trust_remote_code=True)
     except:
         tokenizer = Qwen2TokenizerFast(tokenizer_file=os.path.join(tokenizer_source, "tokenizer.json"))
     
+    # 关键修复：Batch Inference 必须使用左填充
+    tokenizer.padding_side = 'left'
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         tokenizer.pad_token_id = tokenizer.eos_token_id
@@ -303,6 +312,8 @@ def model_test(model_name, use_rag=False, use_few_shot=False, use_finetuned=Fals
         else:
             if rank == 0: print(f"Warning: --use_finetuned is set but no adapter found. Running with Base Model.")
 
+    model.eval()
+
     # Select Dataset
     if rank == 0: print("Loading test dataset...")
     
@@ -316,29 +327,37 @@ def model_test(model_name, use_rag=False, use_few_shot=False, use_finetuned=Fals
     if rank == 0: print(f"Dataset size: {len(test_dataset)}")
     
     sampler = DistributedSampler(test_dataset, shuffle=False) if ddp_enabled else None
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, sampler=sampler, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, sampler=sampler, shuffle=False, num_workers=4)
     
     res = []
     iterator = tqdm(test_loader, disable=(rank != 0))
     start_time = time.time()
     
-    for inputs_str, output_text in iterator:
-        inputs = tokenizer(list(inputs_str), return_tensors="pt", padding=True).to(device)
-        with torch.no_grad():
-            logits = model.generate(
+    # 显存优化：推理模式
+    with torch.inference_mode():
+        # 关键修复：解包三个返回值 (inputs, outputs, types)
+        for inputs_str, output_texts, types in iterator:
+            inputs = tokenizer(list(inputs_str), return_tensors="pt", padding=True, truncation=True, max_length=4096).to(device)
+            
+            generated_ids = model.generate(
                 **inputs,
                 max_new_tokens=512,
-                do_sample=True,
-                temperature=0.1,
-                top_p=0.9,
-                repetition_penalty=1.1, # 修复点：增加重复惩罚
+                do_sample=False, # 建议评估时关闭采样，使用贪婪搜索保证结果复现性
+                repetition_penalty=1.1, # 关键修复：防止模型陷入 error_input 循环
                 pad_token_id=tokenizer.pad_token_id,
                 eos_token_id=tokenizer.eos_token_id
             )
-        response = logits[:, inputs['input_ids'].shape[1]:]
-        generated_texts = tokenizer.batch_decode(response, skip_special_tokens=True)
-        for i in range(len(generated_texts)):
-            res.append({"generated": generated_texts[i], "expected": output_text[i]})
+            
+            # 只截取生成的 token
+            response_ids = generated_ids[:, inputs['input_ids'].shape[1]:]
+            generated_texts = tokenizer.batch_decode(response_ids, skip_special_tokens=True)
+            
+            for i in range(len(generated_texts)):
+                res.append({
+                    "generated": generated_texts[i].strip(),
+                    "expected": output_texts[i],
+                    "type": types[i] # 将 Type 写入结果文件
+                })
             
     if rank == 0: print(f"Inference Time: {time.time() - start_time:.2f}s")
     
@@ -387,7 +406,7 @@ if __name__ == "__main__":
     parser.add_argument("--use_finetuned", action="store_true", help="Load fine-tuned LoRA adapter.") 
     parser.add_argument("--test_type", type=str, default="normal")
     parser.add_argument("--cuda_devices", type=str, default="0,1")
-    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--batch_size", type=int, default=16) # 减小默认 batch size 防止 OOM
     args = parser.parse_args()
     
     if os.environ.get("LOCAL_RANK") is None:
