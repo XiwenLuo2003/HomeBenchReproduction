@@ -9,7 +9,24 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 
 def normalize_command(text):
+    # Remove key=value pairs, e.g., 'brightness=' from 'brightness=60'
     text = re.sub(r'\b[a-zA-Z_]\w*=', '', text)
+    
+    # Attempt to evaluate simple arithmetic expressions within parentheses
+    def evaluate_arithmetic_params(match):
+        params_str = match.group(1).strip()
+        # Check if the string consists only of numbers, operators, and whitespace
+        if re.fullmatch(r'[\d\s\+\-\*\/\.]+', params_str):
+            try:
+                evaluated_result = eval(params_str)
+                return f"({evaluated_result})"
+            except (SyntaxError, TypeError, NameError):
+                pass # Fallback to original string if evaluation fails
+        return f"({params_str})"
+
+    # Apply arithmetic evaluation to content within parentheses
+    text = re.sub(r'\((.*?)\)', evaluate_arithmetic_params, text)
+    
     return text
 
 def extract_commands(text):

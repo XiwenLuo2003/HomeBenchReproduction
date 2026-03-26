@@ -68,16 +68,39 @@ def chang_json2str(state, methods):
     return state_str, method_str
 
 # --- 辅助函数：应用 Chat 模板 ---
+# def apply_chat_template(tokenizer, system, user):
+#     """如果 Tokenizer 支持 Chat 模板则使用，否则使用默认拼接"""
+#     if hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
+#         messages = [
+#             {"role": "system", "content": system},
+#             {"role": "user", "content": user}
+#         ]
+#         return tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+#     else:
+#         # Fallback format
+#         return f"{system}\n\n{user}"
 def apply_chat_template(tokenizer, system, user):
-    """如果 Tokenizer 支持 Chat 模板则使用，否则使用默认拼接"""
+    # 检查是否支持 chat_template
     if hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
-        messages = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user}
-        ]
+        
+        # 【关键修改】针对 Gemma 的特殊处理
+        # 如果模型路径或名称包含 'gemma'，或者你预先知道不支持 system role
+        if "gemma" in tokenizer.name_or_path.lower():
+            # 将 System Prompt 合并到 User Prompt 中
+            combined_user_content = f"{system}\n\n{user}"
+            messages = [
+                {"role": "user", "content": combined_user_content}
+            ]
+        else:
+            # 对于 Qwen, Llama, Mistral 等支持 System Role 的模型
+            messages = [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user}
+            ]
+            
         return tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
     else:
-        # Fallback format
+        # Fallback 格式
         return f"{system}\n\n{user}"
 
 # --- Dataset 类 1: Zero-shot ---
@@ -87,7 +110,7 @@ class no_few_shot_home_assistant_dataset(Dataset):
         dataset_dir = os.path.join(PROJECT_ROOT, "dataset")
         code_dir = os.path.join(PROJECT_ROOT, "code")
         
-        with open(os.path.join(dataset_dir, "test_data.jsonl"), "r") as f:
+        with open(os.path.join(dataset_dir, "test_data_part1.jsonl"), "r") as f:
             lines = f.readlines()
         with open(os.path.join(dataset_dir, "home_status_method.jsonl"), "r") as f_home:
             lines_home = f_home.readlines()
@@ -100,6 +123,8 @@ class no_few_shot_home_assistant_dataset(Dataset):
         with open(os.path.join(code_dir, "system.txt"), "r") as f:
             self.system_prompt = f.read()
         
+        
+
         self.data = []
         for i in range(len(lines)):
             try:
@@ -115,8 +140,32 @@ class no_few_shot_home_assistant_dataset(Dataset):
                 
                 user_content = home_status_case + device_method_case + user_instruction_case
                 
-                # 应用 Chat 模板
-                final_input = apply_chat_template(self.tokenizer, self.system_prompt, user_content)
+                # ... 在 Dataset 类中 ...
+
+                # 针对 Gemma 的强化 Prompt
+                GEMMA_SYSTEM_PROMPT = """You are a smart home code generator.
+                Convert User Instructions into executable Python API calls.
+
+                STRICT FORMATTING RULES:
+                1. Output ONLY the code lines. No markdown, no explanations, no HTML.
+                2. If a device is not found, output: error_input
+                3. Do not start with "Sure" or "Here is". Just start with the code.
+
+                Example:
+                User: Turn on the kitchen light.
+                Code:
+                kitchen.light.turn_on()
+
+                Now handle the following:
+                """
+
+                # ... 在构建 user_content 时 ...
+                if "gemma" in self.tokenizer.name_or_path.lower():
+                    # 使用 Gemma 专用 Prompt
+                    final_input = f"{GEMMA_SYSTEM_PROMPT}\n\n<home_state>\n{state_str}\n</home_state>\n<device_method>\n{method_str}\n</device_method>\n\nUser: {case['input']}\nCode:\n"
+                else:
+                    # 其他模型保持原样
+                    final_input = apply_chat_template(self.tokenizer, self.system_prompt, user_content)
                 
                 self.data.append({
                     "input_text": final_input,
@@ -142,7 +191,7 @@ class home_assistant_dataset(Dataset):
         dataset_dir = os.path.join(PROJECT_ROOT, "dataset")
         code_dir = os.path.join(PROJECT_ROOT, "code")
         
-        with open(os.path.join(dataset_dir, "test_data.jsonl"), "r") as f:
+        with open(os.path.join(dataset_dir, "test_data_part1.jsonl"), "r") as f:
             lines = f.readlines()
         with open(os.path.join(dataset_dir, "home_status_method.jsonl"), "r") as f_home:
             lines_home = f_home.readlines()

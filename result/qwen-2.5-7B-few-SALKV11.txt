@@ -1,0 +1,36 @@
+>>> ALL DATA (Total Performance)
+Sample count: 17367
+Success Rate (EM): 0.2967 (29.67%)
+Precision:         0.3646
+Recall:            0.3641
+F1 Score:          0.3644
+>>> Valid Single (VS)
+Sample count: 6187
+Success Rate (EM): 0.7466 (74.66%)
+Precision:         0.7457
+Recall:            0.7469
+F1 Score:          0.7463
+>>> Invalid Single (IS)
+Sample count: 6765
+Success Rate (EM): 0.0624 (6.24%)
+Precision:         0.0620
+Recall:            0.0624
+F1 Score:          0.0622
+>>> Valid Multi (VM)
+Sample count: 245
+Success Rate (EM): 0.4000 (40.00%)
+Precision:         0.7293
+Recall:            0.7223
+F1 Score:          0.7258
+>>> Invalid Multi (IM)
+Sample count: 97
+Success Rate (EM): 0.0000 (0.00%)
+Precision:         0.0448
+Recall:            0.0448
+F1 Score:          0.0448
+>>> Mix Multi (MM)
+Sample count: 4073
+Success Rate (EM): 0.0034 (0.34%)
+Precision:         0.3450
+Recall:            0.3436
+F1 Score:          0.3443

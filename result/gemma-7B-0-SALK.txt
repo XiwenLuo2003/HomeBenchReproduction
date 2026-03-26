@@ -1,0 +1,163 @@
+(base) root@8nfijls4ac3on-0:/luoxiwen/HomeBenchReproduction# python code/eval.py --result_file output/gemma_few_shot_test_r
+esult.json
+Total results loaded: 4344
+
+========================================
+>>> ALL DATA (Total Performance)
+Sample count: 4344
+
+[Mismatch Case 1]
+  Raw Gen : '## User Instructions & Machine Actions\n\n\n\n**Setting Intensity Of Aromatherapy In Foyer To **\'<b><u><em>Please provide an error message here</em></u></b>\'\'\n\n\n\n\n---\n\n\n\n\n\n### Example Usage :\n\n\n\n\n\n\n```python   # Set Aromatherapy Intesnisty For FoYER Light And Air Purifier\t       \t\t      \xa0 \xa0           \xa0\xa0\u2028\ufeff\n\n\n\n\n\n\n\nprint("Example usage:")\n\n\n\n\n\n\n\n\n\n\n\n#### <br/><strong>Lowering AC Temp By One Degree</strong>:<BR><HR></hr>" + str("<USER INSTRUCTIONS:"); print ("Turn down")+ "<Br>")+"the ac tempreatur ein teh gust bedrm room BY ONE DEGREEE.") )        Print("")           Print(\'<MACHINE INSTRUCTION:\')         println("{Guest Bedroom}.AirConditioners .SET TEMPERATURE TO", GuestBedroom().AIRCONDITIONER["Temperature"] – one)")'
+  Parsed  : ["Print('<MACHINEINSTRUCTION:')", 'Print("")', 'str("<USERINSTRUCTIONS:")', 'println("{GuestBedroom}.AirConditioners.SETTEMPERATURETO",GuestBedroom()', 'print("Exampleusage:")', 'print("Turndown")']
+  Expected: ['error_input']
+
+[Mismatch Case 2]
+  Raw Gen : "## Al's Response\n\n\n\n**Error:** There was an error while processing this request because some commands requested operations which do NOT exist within their respective appliances/devices.<br><hr></ br/>\n\n\n\n\n<b>Example #</b> Open wide those beautiful curtains... <BR />   \t       \t\t      {dining_room . curtin..opne() } ERROR! This function does Not Exist!! Please try another command from our list above:<HR>(This text will appear regardless whether errors occur!)\n\n\n\n\n\n****Please provide me more details about what I am trying achieve so i may help further.**"
+  Parsed  : ['dining_room.curtin..opne()']
+  Expected: ['error_input', 'error_input', 'error_input', 'error_input', 'master_bedroom.light.set_brightness(70)', 'guest_bedroom.air_conditioner.set_temperature(24)', 'error_input']
+
+[Mismatch Case 3]
+  Raw Gen : "## Al's Response :\n\n\n\n**Example:** Please provide me an instruction alongwith any necessary details so I may complete this request...\n\n\n\n\n***\n\n\n\n\n\nIn order fulfill my purpose perfectly , kindly give more context about what exactly would like done.."
+  Parsed  : []
+  Expected: ['study_room.light.set_brightness(60)']
+
+[Mismatch Case 4]
+  Raw Gen : '**Example:**\n\n\n\n## User Instructions & MachineInstructions   --- Al\'s Response ---\n\n\n\n\n*** Please provide me an instruction I want my smart home appliances/devices do.**\n\n\n\n\n\n### Example #A :       \t      \t\t           -- Decrease Volume By Two Percent On Balcony Media Player --\n\n\n\n\n\n\n\n```python          # Error Input If No Method Or Attribute Matches Request!        print("Error input")         exit()                                                \\n <br/>\n\n\n\n\n\n\n<b><u>Please note</u></b> this function will operate within its available options.<BR/><HR></hr><p />               \u2028\xa0 </P>\\r \\t\ufeff \u200b'
+  Parsed  : ['print("Errorinput")', 'exit()']
+  Expected: ['balcony.media_player.set_volume(70)']
+
+[Mismatch Case 5]
+  Raw Gen : '## Al\'s Response\n\n\n\n**Example #A:**   Increase/decrease lighting level & change color tone within Guest Bedroom Light fixture :\n\n\n\n\n```python                                                 # User Instructions       \t           \t\t      |----> Machine commands |          ~------> Error message due incorrect command syntax.<br><hr></HR>> <BR/><b><u>Guest Bedrom Lighting</u></b>:<p />--&gt; Set desired brighness value between range offered.(eg.: increase = "+", decrease= "-") </P>- Please provide an integer number after this instruction followed up arrow key.--&#xAB;"><strong>Please specify new Brightness Value</strong>:</span>( e g., + / – ) --> **Error Input.**'
+  Parsed  : ['Setdesiredbrighnessvaluebetweenrangeoffered.(eg.:"+","-")']
+  Expected: ['error_input']
+--------------------
+Success Rate (EM): 0.0025 (0.25%)
+Precision:         0.0042
+Recall:            0.0018
+F1 Score:          0.0026
+--------------------
+
+========================================
+>>> Valid Single (VS)
+Sample count: 1544
+
+[Mismatch Case 1]
+  Raw Gen : "## Al's Response :\n\n\n\n**Example:** Please provide me an instruction alongwith any necessary details so I may complete this request...\n\n\n\n\n***\n\n\n\n\n\nIn order fulfill my purpose perfectly , kindly give more context about what exactly would like done.."
+  Parsed  : []
+  Expected: ['study_room.light.set_brightness(60)']
+
+[Mismatch Case 2]
+  Raw Gen : '**Example:**\n\n\n\n## User Instructions & MachineInstructions   --- Al\'s Response ---\n\n\n\n\n*** Please provide me an instruction I want my smart home appliances/devices do.**\n\n\n\n\n\n### Example #A :       \t      \t\t           -- Decrease Volume By Two Percent On Balcony Media Player --\n\n\n\n\n\n\n\n```python          # Error Input If No Method Or Attribute Matches Request!        print("Error input")         exit()                                                \\n <br/>\n\n\n\n\n\n\n<b><u>Please note</u></b> this function will operate within its available options.<BR/><HR></hr><p />               \u2028\xa0 </P>\\r \\t\ufeff \u200b'
+  Parsed  : ['print("Errorinput")', 'exit()']
+  Expected: ['balcony.media_player.set_volume(70)']
+
+[Mismatch Case 3]
+  Raw Gen : "**Example:**\n\n\n\n## User Instructions & MachineInstructions   --- Al's Response ---\n\n\n\n\n### Example #A : Increasing Aromatherapy Intensity In Master Bedroom By A Quarter And Setting Light Brightness To Full On/Off Switch For Living Room Lights...\n\n\n\n\n\n <br/><b><u>Master Bedrom</u></b>:<hr></HR><BR />\t\n\n\n\n\n\n\n\n* **USER INSTRUCTIONS**: increase aromatheraphy intenstityin gthe master bedrmomrby y quarter AND turn ON / OFF switch fo rlights i nlivinng rm.<p>(This request includes an error because this function does NOT exist)<Br>.\n\n\n\n\n\n\n * ***MACHINE INSTRUCTION***\xa0-- Error Input --"
+  Parsed  : []
+  Expected: ['master_bedroom.aromatherapy.set_intensity(80)']
+--------------------
+Success Rate (EM): 0.0000 (0.00%)
+Precision:         0.0000
+Recall:            0.0000
+F1 Score:          0.0000
+--------------------
+
+========================================
+>>> Invalid Single (IS)
+Sample count: 1719
+
+[Mismatch Case 1]
+  Raw Gen : '## User Instructions & Machine Actions\n\n\n\n**Setting Intensity Of Aromatherapy In Foyer To **\'<b><u><em>Please provide an error message here</em></u></b>\'\'\n\n\n\n\n---\n\n\n\n\n\n### Example Usage :\n\n\n\n\n\n\n```python   # Set Aromatherapy Intesnisty For FoYER Light And Air Purifier\t       \t\t      \xa0 \xa0           \xa0\xa0\u2028\ufeff\n\n\n\n\n\n\n\nprint("Example usage:")\n\n\n\n\n\n\n\n\n\n\n\n#### <br/><strong>Lowering AC Temp By One Degree</strong>:<BR><HR></hr>" + str("<USER INSTRUCTIONS:"); print ("Turn down")+ "<Br>")+"the ac tempreatur ein teh gust bedrm room BY ONE DEGREEE.") )        Print("")           Print(\'<MACHINE INSTRUCTION:\')         println("{Guest Bedroom}.AirConditioners .SET TEMPERATURE TO", GuestBedroom().AIRCONDITIONER["Temperature"] – one)")'
+  Parsed  : ["Print('<MACHINEINSTRUCTION:')", 'Print("")', 'str("<USERINSTRUCTIONS:")', 'println("{GuestBedroom}.AirConditioners.SETTEMPERATURETO",GuestBedroom()', 'print("Exampleusage:")', 'print("Turndown")']
+  Expected: ['error_input']
+
+[Mismatch Case 2]
+  Raw Gen : '## Al\'s Response\n\n\n\n**Example #A:**   Increase/decrease lighting level & change color tone within Guest Bedroom Light fixture :\n\n\n\n\n```python                                                 # User Instructions       \t           \t\t      |----> Machine commands |          ~------> Error message due incorrect command syntax.<br><hr></HR>> <BR/><b><u>Guest Bedrom Lighting</u></b>:<p />--&gt; Set desired brighness value between range offered.(eg.: increase = "+", decrease= "-") </P>- Please provide an integer number after this instruction followed up arrow key.--&#xAB;"><strong>Please specify new Brightness Value</strong>:</span>( e g., + / – ) --> **Error Input.**'
+  Parsed  : ['Setdesiredbrighnessvaluebetweenrangeoffered.(eg.:"+","-")']
+  Expected: ['error_input']
+
+[Mismatch Case 3]
+  Raw Gen : "**Error:** This request cannot complete because I do have access neither state nor any other data about curtains/ blinds within this system therefore i am unable provide an appropriate response at hand.. Please try another command which does require me accessing different types fo available commands such turning ON / OFF lighting fixtures instead .   \n\n\n\n## Example Usage & Instructions :\n\n\n\n\n```python           # Raise error due lack blind related info                                      \t      \t\t          \t\t\t         __---___.--'s--~-----> | \\n\\r|                 |||\\t              \\_ _/_             _| |\\ n&nbsp;&emsp; <br>\\nsubject:<space>(Please see above text)\\ntest case:\\nn<b>Example #</b>\xa0 raise window shade.\\nd<u></u> --> **ERROR INPUT.** No valid actions were found regarding raising shades.<p><hr></ hr >"
+  Parsed  : []
+  Expected: ['error_input']
+--------------------
+Success Rate (EM): 0.0064 (0.64%)
+Precision:         0.0074
+Recall:            0.0064
+F1 Score:          0.0068
+--------------------
+
+========================================
+>>> Valid Multi (VM)
+Sample count: 53
+
+[Mismatch Case 1]
+  Raw Gen : '## Al\'s Response :\n\n\n\n**Master Bedroom:**   \t       \t\t      \xa0 \xa0        \xa0\xa0\u2028           -- Master Bed Room Air Conditioner & Dehumdifiers --\n\n\n\n\n```python\ufeff <br/><b><u>Example #</u></b>:<hr></HR><BR />\n\n\n\n\n\n* **Lowering AC temp.** one degresss.<p>(This request cannot complete due lack fo available options)</P>, </li>" + br()\n\n\n\n\n\n\n\n---\n\n\n\n\n\n\n<strong>Please provide me more details about what I am asking</strong>'
+  Parsed  : ['br()']
+  Expected: ['study_room.dehumidifiers.set_intensity(30)', 'master_bedroom.air_conditioner.set_temperature(23)']
+
+[Mismatch Case 2]
+  Raw Gen : "## Al's Response...\n\n\n\n**Example #A:**   Please decrease brightessnessof lighting fixture located within kitchen area from its present state downby twenty four percent . Additionally ,please ensure both hallway lamping fixtures have been switched OFF followed up immediately after this command has completed processing.. Please provide me more details regarding any further actions required at hand so I may complete my functions properly.<br><hr></ br/>\n\n\n\n\n```python\u2028\t# Master Bedroom Light Off & Color Adjustment\xa0 \xa0       \t\t      \xa0\xa0           ---Master Bedrom-- >Light Control <BR>.~~ ~----~ ~~-> Living Room Lights On/Off&Brightness Adjustments~~~\n\n\n\n\n\n\n\n{ master_bedrmodernight }\n\n\n\n\n\n{~Error Input!}\n\n\n\n\n\n\n\ufeff"
+  Parsed  : []
+  Expected: ['living_room.light.set_brightness(50)', 'corridor.light.turn_off()', 'study_room.air_conditioner.turn_off()', 'guest_bedroom.air_conditioner.set_temperature(21)', 'balcony.light.set_brightness(40)', 'vacuum_robot.pause()']
+
+[Mismatch Case 3]
+  Raw Gen : "## Al's Response :\n\n\n\n**Example #A:**   \t       \t\t      \xa0\n\n\n\n\n<blockquote><strong><u> User Instructions</u></strong>:<br/>\u2028lowering A/C tempuraturein Guest Bedroom By six Degrees <BR/><hr></HR><p /><b> Machine Instruction</b>:{GuestBedroomAirConditioners .SetTemperatureTo}(temp= )</blockquote>\n\n\n\n\n\n---\n\n\n\n\n\n\n\n****Error Input ****\n\n\n\n\n\n\n-- No such function called SetColorForLight at this time.<P>(This indicates an error input due either from invalid syntax used while making requests OR because requested action isn’t available)."
+  Parsed  : []
+  Expected: ['guest_bedroom.air_conditioner.set_temperature(29)', 'living_room.curtain.set_degree(80)', 'study_room.air_purifiers.set_fan_speed(high)', 'guest_bedroom.air_conditioner.set_temperature(23)']
+--------------------
+Success Rate (EM): 0.0000 (0.00%)
+Precision:         0.0000
+Recall:            0.0000
+F1 Score:          0.0000
+--------------------
+
+========================================
+>>> Mix Multi (MM)
+Sample count: 1011
+
+[Mismatch Case 1]
+  Raw Gen : "## Al's Response\n\n\n\n**Error:** There was an error while processing this request because some commands requested operations which do NOT exist within their respective appliances/devices.<br><hr></ br/>\n\n\n\n\n<b>Example #</b> Open wide those beautiful curtains... <BR />   \t       \t\t      {dining_room . curtin..opne() } ERROR! This function does Not Exist!! Please try another command from our list above:<HR>(This text will appear regardless whether errors occur!)\n\n\n\n\n\n****Please provide me more details about what I am trying achieve so i may help further.**"
+  Parsed  : ['dining_room.curtin..opne()']
+  Expected: ['error_input', 'error_input', 'error_input', 'error_input', 'master_bedroom.light.set_brightness(70)', 'guest_bedroom.air_conditioner.set_temperature(24)', 'error_input']
+
+[Mismatch Case 2]
+  Raw Gen : '## Al\'s Response\n\n\n\n**Example #A:**   \t       \t\t      \xa0 \xa0 <br/>\u2028\n\n\n\n\n<blockquote><b> User Instructions</b>:<p /> Setthe aromatheraphy intenstityto aturndown from its previous state.<BR/><P></ br><hr style="border : none;"><u> Machine Instructinos</u></strong></i></h3><i>\ufeff </div>.&nbsp;\n\n\n\n\n\n```python                                          # Error input since this function doesnot exist!                   { master _bedrom .lighting turn oFF }\n\n\n\n\n\n\n---\n\n\n\n\n\n\n\n<strong> Example B & C have been removed due their similarity but follow similar structure like above... Please provide more details about what needs me do next so I will complete those sections..<em></em>'
+  Parsed  : []
+  Expected: ['error_input', 'guest_bedroom.light.set_brightness(40)', 'study_room.air_conditioner.set_temperature(26)', 'garage.light.set_brightness(40)', 'error_input']
+
+[Mismatch Case 3]
+  Raw Gen : '## Al\'s Response\n\n\n\n**Example #A:**   Please provide me an instruction like this one so I know what action needs taking...\n\n\n\n\n---\n\n\n\n\n\n### User Instructions & Machine Actions\n\n\n\n\n\n\n#### Set Fan Speed Of Air Purifier To Medium In Garage And Other Changes\n\n\n\n\n\n\n\n```python\u2028\u200b\t# Example A text input from above will go here instead!\ufeff\xa0 \xa0 <br/>       \xa0\xa0      ---> This line must match actual command given at prompt!!!.<BR/><HR></hr><p /> \u200b\t\t           ------> Please ensure these commands follow exactly after “machine actions:" label.-- -->        / \\n\\r\\\\N&nbsp; </P>" + str({garge_.AirPurifers().setspeed(\'Medium\')})+ "\\t{foileryLight}.lightsOff()"\\+\\nn\\{bathromHeating].FanSpeed = ‘Low’}\\)\\ndecreasseIntensitiesOfHumidiferInMasterBedroomToHighAndOtherChanges }'
+  Parsed  : ['str({garge_.AirPurifers()', ".setspeed('Medium')", '.lightsOff()']
+  Expected: ['error_input', 'error_input', 'error_input', 'error_input', 'master_bedroom.humidifier.set_intensity(90)', 'bathroom.heating.set_fan_speed(low)', 'error_input', 'master_bedroom.curtain.set_degree(10)']
+--------------------
+Success Rate (EM): 0.0000 (0.00%)
+Precision:         0.0056
+Recall:            0.0011
+F1 Score:          0.0019
+--------------------
+
+========================================
+>>> Invalid Multi (IM)
+Sample count: 17
+
+[Mismatch Case 1]
+  Raw Gen : "## Al's Response\n\n\n\n**Example:** SettheIntensityOfAromatherapyInMasterBedroomToAndAdjustHeatingTemperature ToThirtyDegrees()\n\n\n\n\n***\n\n\n\n\n\n---\n\n\n\n\n\n\n\n### User Instructions & Machine Actions\n\n\n\n\n\n\n<b><u>Please provide me an instruction</u></b> <br><hr></ hr >   \t      \t\t       \xa0 \xa0\u2028           \xa0\xa0---> This text will contain one line describing what I am being asked todo.<p/>        / \\__/\\n\\t| | o _||_| /|\\r|< br />         \\_/_)\\b |\\___)|\\\\ n&nbsp;          ---- -->This part describes how this action would look like after completion.** </div>(For instance:<ol>-Turn On Light In Living Room.- Adjust Fan Speed Of Air Conditioner And Open Curtains.--)</li>) Please include any additional details such as specific commands needed within brackets at end)."
+  Parsed  : ['SettheIntensityOfAromatherapyInMasterBedroomToAndAdjustHeatingTemperatureToThirtyDegrees()']
+  Expected: ['error_input', 'error_input']
+
+[Mismatch Case 2]
+  Raw Gen : "## Al's Response\n\n\n\n**Example:** Setthe brightessness fo rghting at balcany ro an intencity o fgo percentand increasase humidifire intenstity i n teh gust bedrom tpo forty persent..\n\n\n\n\n***\n\n\n\n\n\n---\n\n\n\n\n\n\n\n<b><u> User Instructions</u></b> :   Increase thhe brighhtiness osr lighting ont he baclny tp ninety perecnt adn incresae thee humdifierr intensiyt y te guets bedroomt too foury ty pececnt .\n\n\n\n\n\n\n-- <br/> ----> **Mchine Instructinos**:\t{balance_.ight._brightsse_(brightnesss=ninety). balance__thermostat.__init__(tempreatur e = None)) }"
+  Parsed  : ['balance_.ight._brightsse_(ninety)', '.balance__thermostat.__init__(None)']
+  Expected: ['error_input', 'error_input']
+
+[Mismatch Case 3]
+  Raw Gen : "## Al's Response...\n\n\n\n**Example #A:**   This request includes turning ON Air Purifier & Turning OFF Water Heater.. However this system does not have any functionality related directly towards those appliances therefore I am unable complete these tasks at hand.<br><hr></ br/>\n\n\n\n\n```python                                                # Master Bedroom Light On/Off Switch Control       \t      \t\t          \t\t\t           \xa0 \xa0         \xa0\xa0\u2028--Master Bedrom Heating System Controls---        \n\n\n\n\n\n{ master_bedrm . heating , turing _ON }\n\n\n\n\n\n\n{~ error input ~ If attempting an action which doesn’t exist within said appliance.}\n\n\n\n\n\n\n\n\ufeff"
+  Parsed  : []
+  Expected: ['error_input', 'error_input']
+--------------------
+Success Rate (EM): 0.0000 (0.00%)
+Precision:         0.0000
+Recall:            0.0000
+F1 Score:          0.0000
+--------------------

@@ -5,6 +5,7 @@ import json
 import re
 import time
 import glob
+import traceback
 from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.distributed import DistributedSampler
@@ -17,59 +18,126 @@ from peft import PeftModel
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-# 禁用 Tokenizers 并行，防止 DataLoader 死锁
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+# [Fix OOM] Reduce memory fragmentation
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
-# --- 辅助函数：IC任务核心转换逻辑 ---
+# --- Gemma 专用提示词 (新增) ---
+GEMMA_CUSTOM_PROMPT = """You are a smart home code generator.
+Convert User Instructions into executable Python API calls.
+
+STRICT FORMATTING RULES:
+1. Output ONLY the code lines. No markdown, no explanations, no HTML.
+2. If a device is not found, output: error_input
+3. Do not start with "Sure" or "Here is". Just start with the code.
+
+Example:
+User: Turn on the kitchen light.
+Code:
+kitchen.light.turn_on()
+
+Now handle the following:
+"""
+
+# --- V7 系统提示词 ---
+STRICT_SYSTEM_PROMPT = """You are a smart home control agent. 
+Your task is to convert User Instructions into executable Python-style API calls based on the provided Home State and Device Methods.
+
+RULES:
+1. ONLY output the API calls. Do NOT output explanations.
+2. **Partial Execution**: If the user instruction contains multiple parts, execute the valid parts and output `error_input` for the invalid parts.
+3. If the entire instruction is invalid, output exactly: error_input
+4. Separate multiple commands with newlines.
+5. Do not include markdown code blocks.
+"""
+
+# --- IC 任务转换逻辑 ---
 def transform_ic_input(case):
-    """
-    1. 筛选: 检查 id 是否包含 "one"
-    2. 提取: 从 output 中获取房间名
-    3. 改造: 将 input 中的房间名替换为 "here"
-    4. 生成: 返回 location 提示词
-    """
-    # 1. 筛选单指令数据
-    if "one" not in case.get("id", ""):
-        return None
-
-    # 2. 从标准答案中提取真实房间名 (Ground Truth Room)
-    # output 格式通常为 ["room.device.method(...)"] 或 "room.device..."
+    if "one" not in case.get("id", ""): return None
     output_raw = case.get("output", [])
-    if isinstance(output_raw, list) and len(output_raw) > 0:
-        cmd = output_raw[0]
-    elif isinstance(output_raw, str):
-        cmd = output_raw
-    else:
-        return None
-    
-    # 提取 "living_room" from "living_room.light.turn_on()"
-    if "." not in cmd:
-        return None
-    
+    cmd = output_raw[0] if isinstance(output_raw, list) and len(output_raw) > 0 else (output_raw if isinstance(output_raw, str) else "")
+    if "." not in cmd: return None
     room_key = cmd.split(".")[0]
-    room_name = room_key.replace("_", " ") # "living room"
-
-    # 3. 改造 Input: 替换显式房间名为 "here"
-    original_input = case.get("input", "")
+    room_name = room_key.replace("_", " ")
     
-    # 关键修复：正则同时匹配 "in" 和 "on" (适配 "on the balcony")
-    # 模式: 单词边界 + (in 或 on) + 空格 + 可选的the + 空格 + 房间名 + 单词边界
+    # 支持 in 和 on
     pattern = re.compile(r'\b(?:in|on)\s+(?:the\s+)?' + re.escape(room_name) + r'\b', re.IGNORECASE)
-    
-    # 如果指令中确实提到了该房间，则替换为 here
-    # (如果没提到，保持原样，但也注入位置信息，视为纯隐式)
-    new_input = pattern.sub("here", original_input)
-
-    # 4. 生成位置提示
-    location_context = f"User is located in the {room_name}."
+    new_input = pattern.sub("here", case.get("input", ""))
     
     return {
         "new_input": new_input,
-        "location_context": location_context,
-        "room_name": room_name
+        "location_context": f"User is located in the {room_name}.",
+        "room_name": room_name,
+        "room_key": room_key # 用于 SALK 强制召回
     }
 
-# --- 辅助函数：将 JSON 状态转换为字符串 ---
+# --- V7 清洗函数 ---
+def clean_generated_text(text):
+    stop_signals = ["<User instructions:>", "-------------------------------", "<home_state>", "<device_method>", "User:", "Machine instructions:", "Example:"]
+    min_index = len(text)
+    for signal in stop_signals:
+        idx = text.find(signal)
+        if idx != -1 and idx < min_index: min_index = idx
+    text = text[:min_index].strip()
+    
+    if "." in text and "(" in text and "error_input" in text:
+        lines = text.split('\n')
+        valid_lines = [line.strip() for line in lines if "." in line and "(" in line or "error_input" in line]
+        text = "\n".join(valid_lines) if valid_lines else "error_input"
+    return text
+
+# --- 设备索引 ---
+def build_device_index(home_status):
+    index = {}
+    for room, devices in home_status.items():
+        if room == "VacuumRobot":
+            if "vacuum" not in index: index["vacuum"] = []
+            index["vacuum"].append(room)
+            continue
+        if isinstance(devices, dict):
+            for device_name in devices.keys():
+                if device_name == "room_name": continue
+                clean_name = device_name.replace("_", " ").lower()
+                if clean_name not in index: index[clean_name] = []
+                index[clean_name].append(room)
+                aliases = []
+                if "light" in clean_name: aliases.extend(["lamp", "lights"])
+                if "air conditioner" in clean_name: aliases.extend(["ac", "a/c"])
+                if "humidifier" in clean_name: aliases.extend(["humid"])
+                if "curtain" in clean_name: aliases.extend(["blind"])
+                for alias in aliases:
+                    if alias not in index: index[alias] = []
+                    index[alias].append(room)
+    return index
+
+# --- SALK 上下文提取 ---
+def extract_context_smart_v6(user_input, all_rooms_list, device_index):
+    user_input_lower = user_input.lower()
+    explicit_rooms = set()
+    
+    # 显式匹配
+    for room in all_rooms_list:
+        if room.lower() in user_input_lower: explicit_rooms.add(room)
+            
+    # 隐式匹配
+    implicit_rooms = set()
+    for device_kw, rooms in device_index.items():
+        if re.search(r'\b' + re.escape(device_kw) + r'\b', user_input_lower):
+            for room in rooms: implicit_rooms.add(room)
+
+    final_rooms = explicit_rooms.copy()
+    if not explicit_rooms: final_rooms.update(implicit_rooms)
+    
+    # 降噪
+    if len(final_rooms) > 3:
+        priority_zones = {"living room", "master bedroom", "kitchen", "corridor"}
+        keep_rooms = explicit_rooms.copy()
+        for r in (final_rooms - explicit_rooms):
+            if r in priority_zones: keep_rooms.add(r)
+        if keep_rooms: final_rooms = keep_rooms
+
+    return final_rooms
+
 def chang_json2str(state, methods):
     state_str = ""
     for room in state.keys():
@@ -78,103 +146,129 @@ def chang_json2str(state, methods):
             if isinstance(state[room], dict):
                 state_str += "  state: " + str(state[room].get("state", "N/A")) + "\n"
                 if "attributes" in state[room]:
-                    for attribute in state[room]["attributes"].keys():
-                        val = state[room]["attributes"][attribute]
-                        state_str += "  " + attribute + ": " + str(val.get("value", "N/A"))
-                        if "options" in val:
-                            state_str += " (options" + str(val["options"]) + ")\n"
-                        elif "lowest" in val:
-                            state_str += " (range: " + str(val.get("lowest")) + " - " + str(val.get("highest")) + ")\n"
-                        else:
-                            state_str += "\n"
+                    for k, v in state[room]["attributes"].items():
+                        state_str += f"  {k}: {v.get('value', 'N/A')}\n"
         else:
-            for device in state[room].keys():
+            for device, val in state[room].items():
                 if device == "room_name": continue
-                device_obj = state[room][device]
-                state_str += "  " + device + "\n"
-                state_str += "    state: " + str(device_obj.get("state", "N/A")) + "\n"
-                
-                if "attributes" in device_obj:
-                    for attribute in device_obj["attributes"].keys():
-                        val = device_obj["attributes"][attribute]
-                        state_str += "    " + attribute + ": " + str(val.get("value", "N/A"))
-                        if "options" in val:
-                            state_str += " (options" + str(val["options"]) + ")\n"
-                        elif "lowest" in val:
-                            state_str += " (range: " + str(val.get("lowest")) + " - " + str(val.get("highest")) + ")\n"
-                        else:
-                            state_str += "\n"
+                state_str += f"  {device}\n    state: {val.get('state', 'N/A')}\n"
+                if "attributes" in val:
+                    for k, v in val["attributes"].items():
+                        state_str += f"    {k}: {v.get('value', 'N/A')}\n"
 
     method_str = ""
     for method in methods:
         room_prefix = method["room_name"] + "." if method["room_name"] != "None" else ""
         method_str += f"{room_prefix}{method['device_name']}.{method['operation']}("
-        
         if len(method["parameters"]) > 0:
             params = [f"{p['name']}:{p['type']}" for p in method["parameters"]]
             method_str += ",".join(params)
         method_str += ");"
     return state_str, method_str
 
-# --- 辅助函数：应用 Chat 模板 ---
+# --- 辅助函数：应用 Chat 模板 (已针对 Gemma 升级) ---
 def apply_chat_template(tokenizer, system, user):
-    """如果 Tokenizer 支持 Chat 模板则使用，否则使用默认拼接"""
+    """
+    通用 Chat 模板应用函数。
+    自动判断模型是否支持 chat_template，并处理 Gemma 等不支持 System Role 的特殊情况。
+    """
     if hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
-        messages = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user}
-        ]
+        # 特殊处理：Gemma 系列模型通常不支持 system role
+        is_gemma = "gemma" in tokenizer.name_or_path.lower()
+        
+        if is_gemma:
+            # 将 System Prompt 合并到 User Prompt 中
+            combined_content = f"{system}\n\n{user}"
+            messages = [{"role": "user", "content": combined_content}]
+        else:
+            # 标准格式：支持 System Role
+            messages = [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user}
+            ]
         return tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
     else:
-        # Fallback format
+        # Fallback 格式
         return f"{system}\n\n{user}"
 
-# --- Dataset 类 1: Zero-shot (IC Modified) ---
+# --- Dataset: Zero-shot (SALK + IC) ---
 class no_few_shot_home_assistant_dataset(Dataset):
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
         dataset_dir = os.path.join(PROJECT_ROOT, "dataset")
-        code_dir = os.path.join(PROJECT_ROOT, "code")
+        with open(os.path.join(dataset_dir, "test_data.jsonl"), "r") as f: lines = f.readlines()
+        with open(os.path.join(dataset_dir, "home_status_method.jsonl"), "r") as f_home: lines_home = f_home.readlines()
         
-        with open(os.path.join(dataset_dir, "test_data.jsonl"), "r") as f:
-            lines = f.readlines()
-        with open(os.path.join(dataset_dir, "home_status_method.jsonl"), "r") as f_home:
-            lines_home = f_home.readlines()
-        
-        home_status = {}
+        home_status_full = {} 
         for line in lines_home:
             data = json.loads(line)
-            home_status[data["home_id"]] = {"home_status": data["home_status"], "method": data["method"]}
-        
-        with open(os.path.join(code_dir, "system.txt"), "r") as f:
-            self.system_prompt = f.read()
+            home_status_full[data["home_id"]] = {"home_status": data["home_status"], "method": data["method"]}
         
         self.data = []
         for i in range(len(lines)):
             try:
                 case = json.loads(lines[i])
-                if case["home_id"] not in home_status: continue
-                
-                # --- IC 任务转换 ---
+                if case["home_id"] not in home_status_full: continue
+
+                # 1. IC 转换
                 ic_data = transform_ic_input(case)
-                if ic_data is None: continue # 跳过非单指令数据
+                if ic_data is None: continue
+
+                # 2. SALK 上下文提取
+                user_input = ic_data["new_input"] # 使用替换为 "here" 后的输入
+                current_home_data = home_status_full[case["home_id"]]
+                full_state = current_home_data["home_status"]
+                full_methods = current_home_data["method"]
                 
-                state_str, method_str = chang_json2str(home_status[case["home_id"]]["home_status"], home_status[case["home_id"]]["method"])
+                device_index = build_device_index(full_state)
+                relevant_rooms = extract_context_smart_v6(user_input, list(full_state.keys()), device_index)
+
+                # --- 关键增强: 强制加入用户所在的房间 ---
+                # 因为 input 变成了 "here", 关键词提取可能失效，必须显式加入 Location
+                if ic_data["room_key"] in full_state:
+                    relevant_rooms.add(ic_data["room_key"])
+
+                if not relevant_rooms: relevant_rooms = set(full_state.keys())
+                else:
+                    if "VacuumRobot" in full_state: relevant_rooms.add("VacuumRobot")
+
+                # 3. 过滤
+                filtered_state = {}
+                for room_name, room_data in full_state.items():
+                    if room_name in relevant_rooms: filtered_state[room_name] = room_data
+
+                filtered_methods = []
+                for method_entry in full_methods:
+                    if method_entry["room_name"] in relevant_rooms or method_entry["room_name"] == "None":
+                        filtered_methods.append(method_entry)
                 
-                home_status_case = "<home_state>\n  The following provides the status of all devices in each room of the current household, the adjustable attributes of each device, and the threshold values for adjustable attributes:"+ state_str + "\n" + "</home_state>\n"
-                device_method_case = "<device_method>\n     The following provides the methods to control each device in the current household:"+ method_str + "\n" + "</device_method>\n"
+                state_str, method_str = chang_json2str(filtered_state, filtered_methods)
                 
-                # 注入位置信息和修改后的指令
-                user_instruction_case = "-------------------------------\n" + \
-                                        f"{ic_data['location_context']}\n" + \
-                                        "Here are the user instructions you need to reply to.\n" + \
-                                        "<User instructions:> \n" + \
-                                        ic_data['new_input'] + "\n" + \
-                                        "<Machine instructions:>"
+                # 4. 构建 Prompt (注入位置)
+                home_status_case = "<home_state>\n"+ state_str + "\n" + "</home_state>\n"
+                device_method_case = "<device_method>\n"+ method_str + "\n" + "</device_method>\n"
                 
-                user_content = home_status_case + device_method_case + user_instruction_case
-                
-                final_input = apply_chat_template(self.tokenizer, self.system_prompt, user_content)
+                # --- Prompt 组装逻辑 (整合 Gemma 特性) ---
+                if "gemma" in self.tokenizer.name_or_path.lower():
+                    # 【Gemma 专用 IC 路径】
+                    # 注意：IC 任务必须包含 location_context
+                    gemma_user_part = f"{ic_data['location_context']}\nUser: {user_input}\nCode:\n"
+                    
+                    combined_user_content = f"{GEMMA_CUSTOM_PROMPT}\n\n{home_status_case}{device_method_case}\n{gemma_user_part}"
+                    
+                    messages = [{"role": "user", "content": combined_user_content}]
+                    final_input = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+                else:
+                    # 【通用/SALK V7 路径】
+                    user_instruction_case = "-------------------------------\n" + \
+                                            f"{ic_data['location_context']}\n" + \
+                                            "Here are the user instructions you need to reply to.\n" + \
+                                            "<User instructions:> \n" + \
+                                            user_input + "\n" + \
+                                            "<Machine instructions:>"
+                    
+                    user_content = home_status_case + device_method_case + user_instruction_case
+                    final_input = apply_chat_template(self.tokenizer, STRICT_SYSTEM_PROMPT, user_content)
                 
                 self.data.append({
                     "input_text": final_input,
@@ -182,134 +276,101 @@ class no_few_shot_home_assistant_dataset(Dataset):
                     "type": case.get("type", "normal")
                 })
             except Exception as e:
-                print(f"Error processing line {i}: {e}")
                 continue
 
-    def __len__(self):
-        return len(self.data)
+    def __len__(self): return len(self.data)
+    def __getitem__(self, idx): return self.data[idx]["input_text"], self.data[idx]["output"], self.data[idx]["type"]
 
-    def __getitem__(self, idx):
-        item = self.data[idx]
-        return item["input_text"], item["output"], item["type"]
-
-# --- Dataset 类 2: Few-shot (IC Modified) ---
+# --- Dataset: Few-shot (SALK + IC) ---
 class home_assistant_dataset(Dataset):
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
         dataset_dir = os.path.join(PROJECT_ROOT, "dataset")
         code_dir = os.path.join(PROJECT_ROOT, "code")
-        
-        with open(os.path.join(dataset_dir, "test_data.jsonl"), "r") as f:
-            lines = f.readlines()
-        with open(os.path.join(dataset_dir, "home_status_method.jsonl"), "r") as f_home:
-            lines_home = f_home.readlines()
-        
-        home_status = {}
+        with open(os.path.join(dataset_dir, "test_data.jsonl"), "r") as f: lines = f.readlines()
+        with open(os.path.join(dataset_dir, "home_status_method.jsonl"), "r") as f_home: lines_home = f_home.readlines()
+        home_status_full = {}
         for line in lines_home:
             data = json.loads(line)
-            home_status[data["home_id"]] = {"home_status": data["home_status"], "method": data["method"]}
-        
-        ex_path1 = os.path.join(code_dir, "example1.txt")
-        ex_path2 = os.path.join(code_dir, "example.txt")
-        if os.path.exists(ex_path1):
-            with open(ex_path1, "r") as f: examples = f.read()
-        elif os.path.exists(ex_path2):
-            with open(ex_path2, "r") as f: examples = f.read()
-        else:
-            examples = ""
+            home_status_full[data["home_id"]] = {"home_status": data["home_status"], "method": data["method"]}
+        ex_path = os.path.join(code_dir, "example1.txt")
+        if not os.path.exists(ex_path): ex_path = os.path.join(code_dir, "example.txt")
+        examples = open(ex_path, "r").read() if os.path.exists(ex_path) else ""
 
-        with open(os.path.join(code_dir, "system.txt"), "r") as f:
-            self.system_prompt = f.read()
-        
         self.data = []
         for i in range(len(lines)):
             try:
                 case = json.loads(lines[i])
-                if case["home_id"] not in home_status: continue
+                if case["home_id"] not in home_status_full: continue
                 
-                # --- IC 任务转换 ---
                 ic_data = transform_ic_input(case)
-                if ic_data is None: continue 
+                if ic_data is None: continue
 
-                state_str, method_str = chang_json2str(home_status[case["home_id"]]["home_status"], home_status[case["home_id"]]["method"])
+                user_input = ic_data["new_input"]
+                full_state = home_status_full[case["home_id"]]["home_status"]
+                full_methods = home_status_full[case["home_id"]]["method"]
                 
-                home_status_case = "<home_state>\n  The following provides the status of all devices in each room of the current household, the adjustable attributes of each device, and the threshold values for adjustable attributes:"+ state_str + "\n" + "</home_state>\n"
-                device_method_case = "<device_method>\n     The following provides the methods to control each device in the current household:"+ method_str + "\n" + "</device_method>\n"
+                device_index = build_device_index(full_state)
+                relevant_rooms = extract_context_smart_v6(user_input, list(full_state.keys()), device_index)
                 
-                # 注入位置信息
-                user_instruction_case = "-------------------------------\n" + \
-                                        f"{ic_data['location_context']}\n" + \
-                                        "Here are the user instructions you need to reply to.\n" + \
-                                        "<User instructions:> \n" + \
-                                        ic_data['new_input'] + "\n" + \
-                                        "<Machine instructions:>"
+                if ic_data["room_key"] in full_state: relevant_rooms.add(ic_data["room_key"]) # Force add location
+                if not relevant_rooms: relevant_rooms = set(full_state.keys())
+                else: 
+                    if "VacuumRobot" in full_state: relevant_rooms.add("VacuumRobot")
+
+                filtered_state = {k:v for k,v in full_state.items() if k in relevant_rooms}
+                filtered_methods = [m for m in full_methods if m["room_name"] in relevant_rooms or m["room_name"] == "None"]
+
+                state_str, method_str = chang_json2str(filtered_state, filtered_methods)
                 
-                user_content = home_status_case + device_method_case + examples + user_instruction_case
+                home_status_case = "<home_state>\n"+ state_str + "\n" + "</home_state>\n"
+                device_method_case = "<device_method>\n"+ method_str + "\n" + "</device_method>\n"
                 
-                final_input = apply_chat_template(self.tokenizer, self.system_prompt, user_content)
+                # --- Prompt 组装逻辑 (整合 Gemma 特性) ---
+                if "gemma" in self.tokenizer.name_or_path.lower():
+                    # Gemma 下，将 examples 放在 context 之后，user instruction 之前
+                    # 注意：需要把 IC 上下文放在合适的位置
+                    gemma_user_part = f"{examples}\n{ic_data['location_context']}\nUser: {user_input}\nCode:\n"
+                    combined_content = f"{GEMMA_CUSTOM_PROMPT}\n\n{home_status_case}{device_method_case}\n{gemma_user_part}"
+                    messages = [{"role": "user", "content": combined_content}]
+                    final_input = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+                else:
+                    user_instruction_case = "-------------------------------\n" + \
+                                            f"{ic_data['location_context']}\n" + \
+                                            "Here are the user instructions...\n<User instructions:> \n" + \
+                                            user_input + "\n" + "<Machine instructions:>"
+                    
+                    user_content = home_status_case + device_method_case + examples + user_instruction_case
+                    final_input = apply_chat_template(self.tokenizer, STRICT_SYSTEM_PROMPT, user_content)
+                    
+                self.data.append({"input_text": final_input, "output": case["output"], "type": case.get("type", "normal")})
+            except: continue
+    def __len__(self): return len(self.data)
+    def __getitem__(self, idx): return self.data[idx]["input_text"], self.data[idx]["output"], self.data[idx]["type"]
 
-                self.data.append({
-                    "input_text": final_input,
-                    "output": case["output"],
-                    "type": case.get("type", "normal")
-                })
-            except Exception as e:
-                continue
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        item = self.data[idx]
-        return item["input_text"], item["output"], item["type"]
-
-# --- Dataset 类 3: RAG Mode (IC Modified) ---
+# --- RAG Class ---
 class rag_home_assistant_dataset(Dataset):
     def __init__(self, tokenizer, model_name_for_rag):
         self.tokenizer = tokenizer
         dataset_dir = os.path.join(PROJECT_ROOT, "dataset")
-        code_dir = os.path.join(PROJECT_ROOT, "code")
-        
-        # 尝试加载 System Prompt
-        sys_path = os.path.join(code_dir, "system.txt")
-        if os.path.exists(sys_path):
-             with open(sys_path, "r") as f: self.system_prompt = f.read()
-        else:
-             self.system_prompt = "You are a smart home assistant."
-
         filename_candidates = [f"{model_name_for_rag}_rag_test_data.json", "rag_test_data.json"]
-        rag_path = None
-        for fn in filename_candidates:
-            p = os.path.join(dataset_dir, fn)
-            if os.path.exists(p):
-                rag_path = p
-                break
-        
+        rag_path = next((os.path.join(dataset_dir, f) for f in filename_candidates if os.path.exists(os.path.join(dataset_dir, f))), None)
         if not rag_path:
-            candidates = glob.glob(os.path.join(dataset_dir, "*rag_test_data.json"))
-            if candidates: rag_path = candidates[0]
-        
-        if not rag_path:
-            raise FileNotFoundError(f"Could not find RAG dataset.")
-            
-        print(f"Loading RAG dataset from: {rag_path}")
-        with open(rag_path, "r") as f:
-            raw_data = json.load(f)
-            
+            cand = glob.glob(os.path.join(dataset_dir, "*rag_test_data.json"))
+            if cand: rag_path = cand[0]
+        if not rag_path: raise FileNotFoundError("RAG dataset not found")
+        print(f"Loading RAG: {rag_path}")
+        with open(rag_path, "r") as f: raw_data = json.load(f)
         self.data = []
         for item in raw_data:
-            # --- IC 任务转换 ---
             ic_data = transform_ic_input(item)
-            if ic_data is None: continue 
-
-            original_input_str = item["input"]
+            if ic_data is None: continue
             
-            # 1. 替换 'in living room' 或 'on the balcony' -> 'here'
-            # 修正：同样使用更新后的正则
+            # RAG Input Modification (保持原逻辑，但需要适配 Gemma)
+            original_input_str = item["input"]
             pattern = re.compile(r'\b(?:in|on)\s+(?:the\s+)?' + re.escape(ic_data['room_name']) + r'\b', re.IGNORECASE)
             modified_str = pattern.sub("here", original_input_str)
             
-            # 2. 注入位置信息
             insert_marker = "<User instructions:>"
             if insert_marker in modified_str:
                 parts = modified_str.split(insert_marker)
@@ -317,182 +378,170 @@ class rag_home_assistant_dataset(Dataset):
             else:
                 final_rag_input = ic_data['location_context'] + "\n" + modified_str
 
-            # 3. 再次应用 Template
-            if "system" in item["input"]:
-                final_input = final_rag_input
+            if "gemma" in self.tokenizer.name_or_path.lower():
+                # 对于 RAG + Gemma，如果数据已经是 Prompt 格式，我们尝试提取关键信息或者直接包裹
+                # 由于 RAG 数据通常已经包含了检索到的 Context，直接 modifying string 比较安全
+                # 但需要确保 apply_chat_template 正确处理
+                
+                # 如果 RAG 数据不包含 SYSTEM PROMPT，我们需要加
+                if "system" not in item["input"]:
+                     final_input = f"{GEMMA_CUSTOM_PROMPT}\n\n{final_rag_input}"
+                else:
+                     final_input = final_rag_input
+                
+                messages = [{"role": "user", "content": final_input}]
+                final_input = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
             else:
-                final_input = apply_chat_template(self.tokenizer, self.system_prompt, final_rag_input)
+                if "system" in item["input"]: final_input = final_rag_input
+                else: final_input = apply_chat_template(self.tokenizer, STRICT_SYSTEM_PROMPT, final_rag_input)
+            
+            self.data.append({"input_text": final_input, "output": item["output"], "type": item.get("type", "normal")})
+    def __len__(self): return len(self.data)
+    def __getitem__(self, idx): return self.data[idx]["input_text"], self.data[idx]["output"], self.data[idx]["type"]
 
-            self.data.append({
-                "input_text": final_input,
-                "output": item["output"],
-                "type": item.get("type", "normal")
-            })
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        item = self.data[idx]
-        return item["input_text"], item["output"], item["type"]
-
-# --- 主测试函数 ---
+# --- 主要逻辑修改区 ---
 def model_test(model_name, use_rag=False, use_few_shot=False, use_finetuned=False, test_type=None, batch_size=64):
     local_rank = int(os.environ.get("LOCAL_RANK", -1))
-    world_size = int(os.environ.get("WORLD_SIZE", 1))
     ddp_enabled = local_rank != -1
-
-    if ddp_enabled:
-        dist.init_process_group(backend="nccl")
-        torch.cuda.set_device(local_rank)
-        device = torch.device(f"cuda:{local_rank}")
-        rank = dist.get_rank()
-        if rank == 0: print(f"DDP Enabled. World Size: {world_size}")
-    else:
-        rank = 0
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print("Running in Single Process Mode (No DDP).")
-
-    sub_dirs = {
-        "llama": "llama3-8b-Instruct",
-        "qwen": "Qwen2.5-7B-Instruct",
-        "mistral": "Mistral-7B-Instruct-v0.3",
-        "gemma": "Gemma-7B-Instruct-v0.3"
-    }
     
-    base_model_path_name = sub_dirs.get(model_name, model_name)
-    base_model_dir = os.path.join(PROJECT_ROOT, "models", base_model_path_name)
-    adapter_dir = os.path.join(PROJECT_ROOT, "model_output", f"{model_name}_sft")
-    
-    if rank == 0: 
-        print(f"Loading Base Model from: {base_model_dir}")
-
-    # Tokenizer
-    tokenizer_source = adapter_dir if use_finetuned and os.path.exists(os.path.join(adapter_dir, "tokenizer.json")) else base_model_dir
+    # [Improvement] Add try-finally block to ensure process group is destroyed even on error
     try:
-        tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, trust_remote_code=True)
-    except:
-        tokenizer = Qwen2TokenizerFast(tokenizer_file=os.path.join(tokenizer_source, "tokenizer.json"))
-    
-    tokenizer.padding_side = 'left'
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-        tokenizer.pad_token_id = tokenizer.eos_token_id
-
-    # Model
-    load_device_map = None if ddp_enabled else "auto"
-    model = AutoModelForCausalLM.from_pretrained(
-        base_model_dir,
-        torch_dtype=torch.bfloat16,
-        device_map=load_device_map, 
-        trust_remote_code=True
-    )
-    if ddp_enabled: model.to(device)
-
-    # Load Adapter
-    if use_finetuned:
-        if os.path.exists(os.path.join(adapter_dir, "adapter_config.json")):
-            if rank == 0: print(f"Loading SFT Adapter from {adapter_dir}...")
-            model = PeftModel.from_pretrained(model, adapter_dir)
-            if ddp_enabled: model.to(device)
+        if ddp_enabled:
+            # [CRITICAL FIX] 1. 明确设置当前 Device
+            # 注意：这里的 local_rank 是相对于 CUDA_VISIBLE_DEVICES 的索引
+            torch.cuda.set_device(local_rank)
+            device = torch.device(f"cuda:{local_rank}")
+            
+            # [CRITICAL FIX] 2. 初始化 DDP 时传入 device_id，解决 Barrier 和 Device 猜测警告
+            dist.init_process_group(backend="nccl", device_id=device)
+            rank = dist.get_rank()
         else:
-            if rank == 0: print(f"Warning: --use_finetuned is set but no adapter found. Running with Base Model.")
+            rank = 0
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    model.eval()
-
-    # Select Dataset
-    if rank == 0: print("Loading test dataset (IC Mode)...")
-    
-    if use_rag:
-        test_dataset = rag_home_assistant_dataset(tokenizer, base_model_path_name)
-    elif use_few_shot:
-        test_dataset = home_assistant_dataset(tokenizer)
-    else:
-        test_dataset = no_few_shot_home_assistant_dataset(tokenizer)
+        sub_dirs = {"llama": "llama3-8b-Instruct", "qwen": "Qwen2.5-7B-Instruct", "mistral": "Mistral-7B-Instruct-v0.3", "gemma": "Gemma-7B-Instruct-v0.3"}
+        base_model_path_name = sub_dirs.get(model_name, model_name)
+        base_model_dir = os.path.join(PROJECT_ROOT, "models", base_model_path_name)
+        adapter_dir = os.path.join(PROJECT_ROOT, "model_output", f"{model_name}_sft")
         
-    if rank == 0: print(f"Dataset size: {len(test_dataset)}")
-    
-    sampler = DistributedSampler(test_dataset, shuffle=False) if ddp_enabled else None
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, sampler=sampler, shuffle=False, num_workers=4)
-    
-    res = []
-    iterator = tqdm(test_loader, disable=(rank != 0))
-    start_time = time.time()
-    
-    with torch.inference_mode():
-        for inputs_str, output_texts, types in iterator:
-            inputs = tokenizer(list(inputs_str), return_tensors="pt", padding=True, truncation=True, max_length=4096).to(device)
-            
-            generated_ids = model.generate(
-                **inputs,
-                max_new_tokens=512,
-                do_sample=False,
-                repetition_penalty=1.1,
-                pad_token_id=tokenizer.pad_token_id,
-                eos_token_id=tokenizer.eos_token_id
+        if rank == 0: print(f"Loading Model: {base_model_dir} on device: {device}")
+        
+        tokenizer_source = adapter_dir if use_finetuned and os.path.exists(os.path.join(adapter_dir, "tokenizer.json")) else base_model_dir
+        try: tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, trust_remote_code=True)
+        except: tokenizer = Qwen2TokenizerFast(tokenizer_file=os.path.join(tokenizer_source, "tokenizer.json"))
+        tokenizer.padding_side = 'left'
+        if tokenizer.pad_token is None: tokenizer.pad_token = tokenizer.eos_token
+        
+        # [CRITICAL FIX] 3. 模型加载时使用 device_map 强制绑定到当前 local_rank
+        # 这能防止所有进程都去抢占 GPU 0 的显存
+        if ddp_enabled:
+            model = AutoModelForCausalLM.from_pretrained(
+                base_model_dir, 
+                torch_dtype=torch.bfloat16, 
+                device_map={'': local_rank},  # 强制映射
+                trust_remote_code=True
             )
-            
-            response_ids = generated_ids[:, inputs['input_ids'].shape[1]:]
-            generated_texts = tokenizer.batch_decode(response_ids, skip_special_tokens=True)
-            
-            for i in range(len(generated_texts)):
-                res.append({
-                    "generated": generated_texts[i].strip(),
-                    "expected": output_texts[i],
-                    "type": types[i]
-                })
-            
-    if rank == 0: print(f"Inference Time: {time.time() - start_time:.2f}s")
-    
-    # Save Results
-    output_dir = os.path.join(PROJECT_ROOT, "output")
-    os.makedirs(output_dir, exist_ok=True)
-    
-    mode_parts = []
-    if use_finetuned: mode_parts.append("sft")
-    if use_rag: mode_parts.append("rag")
-    elif use_few_shot: mode_parts.append("few_shot")
-    else: mode_parts.append("zero_shot")
-    
-    mode_suffix = "_".join(mode_parts)
-    if test_type and test_type != "normal": mode_suffix += f"_{test_type}"
-    
-    part_file = os.path.join(output_dir, f"{model_name}_{mode_suffix}_IC_part_{rank}.json")
-    with open(part_file, "w") as f:
-        f.write(json.dumps(res, indent=4, ensure_ascii=False))
-    
-    if ddp_enabled: dist.barrier()
-    
-    if rank == 0:
-        print("Merging results...")
-        final_res = []
-        pattern = os.path.join(output_dir, f"{model_name}_{mode_suffix}_IC_part_*.json")
-        for file_path in glob.glob(pattern):
-            try:
-                with open(file_path, "r") as f:
-                    final_res.extend(json.load(f))
-                os.remove(file_path)
-            except: pass
-        
-        final_file = os.path.join(output_dir, f"{model_name}_{mode_suffix}_IC_test_result.json")
-        with open(final_file, "w") as f:
-            f.write(json.dumps(final_res, indent=4, ensure_ascii=False))
-        print(f"Saved to: {final_file}")
+        else:
+            model = AutoModelForCausalLM.from_pretrained(
+                base_model_dir, 
+                torch_dtype=torch.bfloat16, 
+                device_map="auto", 
+                trust_remote_code=True
+            )
 
-    if ddp_enabled: dist.destroy_process_group()
+        # 确保模型在正确的 device 上 (双重保险)
+        if ddp_enabled and getattr(model, "device", None) != device:
+             model.to(device)
+
+        if use_finetuned and os.path.exists(os.path.join(adapter_dir, "adapter_config.json")):
+            # PEFT 模型加载也需要注意 device
+            model = PeftModel.from_pretrained(model, adapter_dir, device_map={'': local_rank} if ddp_enabled else "auto")
+            if ddp_enabled: model.to(device)
+
+        if rank == 0: print("Loading dataset (SALK V7 + IC)...")
+        if use_rag: test_dataset = rag_home_assistant_dataset(tokenizer, base_model_path_name)
+        elif use_few_shot: test_dataset = home_assistant_dataset(tokenizer)
+        else: test_dataset = no_few_shot_home_assistant_dataset(tokenizer)
+        
+        sampler = DistributedSampler(test_dataset, shuffle=False) if ddp_enabled else None
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, sampler=sampler, shuffle=False, num_workers=4)
+        
+        res = []
+        # 只有 Rank 0 显示进度条，避免控制台混乱
+        iterator = tqdm(test_loader, disable=(rank != 0))
+        start_time = time.time()
+        
+        # [Fix OOM] Empty Cache before generation loop
+        torch.cuda.empty_cache()
+        
+        with torch.inference_mode():
+            for inputs_str, output_texts, types in iterator:
+                inputs = tokenizer(list(inputs_str), return_tensors="pt", padding=True, truncation=True, max_length=4096).to(device)
+                generated_ids = model.generate(
+                    **inputs, 
+                    max_new_tokens=256, 
+                    do_sample=False, 
+                    repetition_penalty=1.1, 
+                    pad_token_id=tokenizer.pad_token_id, 
+                    eos_token_id=tokenizer.eos_token_id
+                )
+                response = generated_ids[:, inputs['input_ids'].shape[1]:]
+                generated_texts = tokenizer.batch_decode(response, skip_special_tokens=True)
+                for i in range(len(generated_texts)):
+                    cleaned = clean_generated_text(generated_texts[i])
+                    res.append({"generated": cleaned, "expected": output_texts[i], "type": types[i]})
+                
+        if rank == 0: print(f"Time: {time.time() - start_time:.2f}s")
+        
+        output_dir = os.path.join(PROJECT_ROOT, "output")
+        os.makedirs(output_dir, exist_ok=True)
+        mode_parts = []
+        if use_finetuned: mode_parts.append("sft")
+        if use_rag: mode_parts.append("rag")
+        elif use_few_shot: mode_parts.append("few_shot")
+        else: mode_parts.append("zero_shot")
+        mode_suffix = "_".join(mode_parts)
+        if test_type and test_type != "normal": mode_suffix += f"_{test_type}"
+        mode_suffix += "_SALK_V7_IC" # 后缀
+        
+        part_file = os.path.join(output_dir, f"{model_name}_{mode_suffix}_part_{rank}.json")
+        with open(part_file, "w") as f: f.write(json.dumps(res, indent=4, ensure_ascii=False))
+        
+        if ddp_enabled: dist.barrier()
+        if rank == 0:
+            final_res = []
+            for file_path in glob.glob(os.path.join(output_dir, f"{model_name}_{mode_suffix}_part_*.json")):
+                try:
+                    with open(file_path, "r") as f: final_res.extend(json.load(f))
+                    os.remove(file_path)
+                except: pass
+            final_file = os.path.join(output_dir, f"{model_name}_{mode_suffix}_test_result.json")
+            with open(final_file, "w") as f: f.write(json.dumps(final_res, indent=4, ensure_ascii=False))
+            print(f"Saved: {final_file}")
+
+    except Exception as e:
+        # 打印详细报错
+        print(f"[Rank {local_rank}] Error: {str(e)}")
+        traceback.print_exc()
+        raise e
+        
+    finally:
+        # [Improvement] Cleanup process group to prevent zombies
+        if ddp_enabled and dist.is_initialized():
+            dist.destroy_process_group()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_name", type=str, default="qwen", choices=["llama", "qwen", "mistral", "gemma"])
     parser.add_argument("--use_rag", action="store_true")
     parser.add_argument("--use_few_shot", action="store_true")
-    parser.add_argument("--use_finetuned", action="store_true", help="Load fine-tuned LoRA adapter.") 
+    parser.add_argument("--use_finetuned", action="store_true") 
     parser.add_argument("--test_type", type=str, default="normal")
     parser.add_argument("--cuda_devices", type=str, default="0,1")
-    parser.add_argument("--batch_size", type=int, default=16) 
+    parser.add_argument("--batch_size", type=int, default=64)
     args = parser.parse_args()
     
-    if os.environ.get("LOCAL_RANK") is None:
-        os.environ['CUDA_VISIBLE_DEVICES'] = args.cuda_devices
-    
+    # [NOTE] 请务必在 Shell 中运行: export CUDA_VISIBLE_DEVICES=0,1,2,4,5,6
+    # torchrun 会忽略这里的设置，所以必须在外部设置
+        
     model_test(args.model_name, args.use_rag, args.use_few_shot, args.use_finetuned, args.test_type, args.batch_size)

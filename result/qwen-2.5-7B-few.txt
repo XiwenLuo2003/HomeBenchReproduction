@@ -1,0 +1,162 @@
+(base) root@8nfijls4ac3on-0:/luoxiwen/HomeBenchReproduction# python code/eval.py  --result_file output/qwen_few_shot_test_result.json
+Total results loaded: 17368
+
+========================================
+>>> ALL DATA (Total Performance)
+Sample count: 17368
+
+[Mismatch Case 1]
+  Raw Gen : '{corridor.light.set_brightness(90)}'
+  Parsed  : ['corridor.light.set_brightness(90)']
+  Expected: ['error_input']
+
+[Mismatch Case 2]
+  Raw Gen : '{living_room.curtain.set_degree(0),living_room.dehumidifiers.set_intensity(70)}'
+  Parsed  : ['living_room.curtain.set_degree(0)', 'living_room.dehumidifiers.set_intensity(70)']
+  Expected: ['error_input', 'living_room.dehumidifiers.set_intensity(70)']
+
+[Mismatch Case 3]
+  Raw Gen : '{study_room.air_conditioner.set_swing(auto)}'
+  Parsed  : ['study_room.air_conditioner.set_swing(auto)']
+  Expected: ['error_input']
+
+[Mismatch Case 4]
+  Raw Gen : '{guest_bedroom.dehumidifiers.set_intensity(40)}'
+  Parsed  : ['guest_bedroom.dehumidifiers.set_intensity(40)']
+  Expected: ['error_input']
+
+[Mismatch Case 5]
+  Raw Gen : '{balcony.curtain.set_degree(70)}'
+  Parsed  : ['balcony.curtain.set_degree(70)']
+  Expected: ['error_input']
+--------------------
+Success Rate (EM): 0.3136 (31.36%)
+Precision:         0.3660
+Recall:            0.3662
+F1 Score:          0.3661
+--------------------
+
+========================================
+>>> Valid Single (VS)
+Sample count: 6188
+
+[Mismatch Case 1]
+  Raw Gen : '{error_input}'
+  Parsed  : ['error_input']
+  Expected: ['ding_room.humidifier.set_intensity(0)']
+
+[Mismatch Case 2]
+  Raw Gen : '{error_input}'
+  Parsed  : ['error_input']
+  Expected: ['store_room.dehumidifiers.set_intensity(70)']
+
+[Mismatch Case 3]
+  Raw Gen : "{guest_bedroom.humidifier.set_mode('sleep')}"
+  Parsed  : ["guest_bedroom.humidifier.set_mode('sleep')"]
+  Expected: ['guest_bedroom.humidifier.set_mode(sleep)']
+--------------------
+Success Rate (EM): 0.6962 (69.62%)
+Precision:         0.6948
+Recall:            0.6963
+F1 Score:          0.6956
+--------------------
+
+========================================
+>>> Invalid Single (IS)
+Sample count: 6765
+
+[Mismatch Case 1]
+  Raw Gen : '{corridor.light.set_brightness(90)}'
+  Parsed  : ['corridor.light.set_brightness(90)']
+  Expected: ['error_input']
+
+[Mismatch Case 2]
+  Raw Gen : '{study_room.air_conditioner.set_swing(auto)}'
+  Parsed  : ['study_room.air_conditioner.set_swing(auto)']
+  Expected: ['error_input']
+
+[Mismatch Case 3]
+  Raw Gen : '{guest_bedroom.dehumidifiers.set_intensity(40)}'
+  Parsed  : ['guest_bedroom.dehumidifiers.set_intensity(40)']
+  Expected: ['error_input']
+--------------------
+Success Rate (EM): 0.1515 (15.15%)
+Precision:         0.1499
+Recall:            0.1515
+F1 Score:          0.1507
+--------------------
+
+========================================
+>>> Valid Multi (VM)
+Sample count: 245
+
+[Mismatch Case 1]
+  Raw Gen : "{guest_bedroom.air_conditioner.set_mode('cool'),living_room.dehumidifiers.turn_on(),ding_room.light.set_brightness(30),living_room.media_player.set_volume(60),kitchen.light.set_brightness(40)}"
+  Parsed  : ["guest_bedroom.air_conditioner.set_mode('cool')", 'living_room.dehumidifiers.turn_on()', 'ding_room.light.set_brightness(30)', 'living_room.media_player.set_volume(60)', 'kitchen.light.set_brightness(40)']
+  Expected: ['guest_bedroom.air_conditioner.set_mode(cool)', 'living_room.dehumidifiers.turn_on()', 'ding_room.light.set_brightness(30)', 'living_room.media_player.set_volume(60)', 'kitchen.light.set_brightness(40)']
+
+[Mismatch Case 2]
+  Raw Gen : "{guest_bedroom.heating.set_temperature(21),guest_bedroom.curtain.set_degree(20),study_room.dehumidifiers.set_mode('auto'),guest_bedroom.heating.set_temperature(26),study_room.air_purifiers.set_fan_speed('low')}"
+  Parsed  : ['guest_bedroom.heating.set_temperature(21)', 'guest_bedroom.curtain.set_degree(20)', "study_room.dehumidifiers.set_mode('auto')", 'guest_bedroom.heating.set_temperature(26)', "study_room.air_purifiers.set_fan_speed('low')"]
+  Expected: ['guest_bedroom.heating.set_temperature(21)', 'guest_bedroom.curtain.set_degree(20)', 'study_room.dehumidifiers.set_mode(auto)', 'guest_bedroom.heating.set_temperature(26)', 'study_room.air_purifiers.set_fan_speed(medium)']
+
+[Mismatch Case 3]
+  Raw Gen : '{balcony.aromatherapy.set_interval(49),bathroom.light.set_brightness(60)}'
+  Parsed  : ['balcony.aromatherapy.set_interval(49)', 'bathroom.light.set_brightness(60)']
+  Expected: ['balcony.aromatherapy.set_interval(50)', 'bathroom.light.set_brightness(60)']
+--------------------
+Success Rate (EM): 0.4000 (40.00%)
+Precision:         0.7070
+Recall:            0.7031
+F1 Score:          0.7051
+--------------------
+
+========================================
+>>> Mix Multi (MM)
+Sample count: 4073
+
+[Mismatch Case 1]
+  Raw Gen : '{living_room.curtain.set_degree(0),living_room.dehumidifiers.set_intensity(70)}'
+  Parsed  : ['living_room.curtain.set_degree(0)', 'living_room.dehumidifiers.set_intensity(70)']
+  Expected: ['error_input', 'living_room.dehumidifiers.set_intensity(70)']
+
+[Mismatch Case 2]
+  Raw Gen : "{garage.fan.set_speed('high'),master_bedroom.media_player.set_volume(100),guest_bedroom.air_conditioner.set_swing('down'),master_bedroom.aromatherapy.set_intensity(10),master_bedroom.curtain.set_degree(70),study_room.air_conditioner.set_temperature(20)}"
+  Parsed  : ["garage.fan.set_speed('high')", 'master_bedroom.media_player.set_volume(100)', "guest_bedroom.air_conditioner.set_swing('down')", 'master_bedroom.aromatherapy.set_intensity(10)', 'master_bedroom.curtain.set_degree(70)', 'study_room.air_conditioner.set_temperature(20)']
+  Expected: ['error_input', 'master_bedroom.media_player.set_volume(100)', 'guest_bedroom.air_conditioner.set_swing(up)', 'error_input', 'master_bedroom.curtain.set_degree(70)', 'study_room.air_conditioner.set_temperature(20)']
+
+[Mismatch Case 3]
+  Raw Gen : '{corridor.aromatherapy.set_intensity(30),garage.light.set_brightness(40),living_room.air_conditioner.set_fan_speed(low),living_room.media_player.set_volume(0)}'
+  Parsed  : ['corridor.aromatherapy.set_intensity(30)', 'garage.light.set_brightness(40)', 'living_room.air_conditioner.set_fan_speed(low)', 'living_room.media_player.set_volume(0)']
+  Expected: ['corridor.aromatherapy.set_intensity(30)', 'error_input', 'error_input', 'living_room.media_player.set_volume(0)']
+--------------------
+Success Rate (EM): 0.0039 (0.39%)
+Precision:         0.3367
+Recall:            0.3358
+F1 Score:          0.3363
+--------------------
+
+========================================
+>>> Invalid Multi (IM)
+Sample count: 97
+
+[Mismatch Case 1]
+  Raw Gen : '{garage.air_purifiers.turn_on(),living_room.media_player.set_volume(96)}'
+  Parsed  : ['garage.air_purifiers.turn_on()', 'living_room.media_player.set_volume(96)']
+  Expected: ['error_input', 'error_input']
+
+[Mismatch Case 2]
+  Raw Gen : '{living_room.media_player.set_volume(21),master_bedroom.media_player.set_volume(0)}'
+  Parsed  : ['living_room.media_player.set_volume(21)', 'master_bedroom.media_player.set_volume(0)']
+  Expected: ['error_input', 'error_input']
+
+[Mismatch Case 3]
+  Raw Gen : '{guest_bedroom.heating.set_temperature(82),foyer.aromatherapy.set_intensity(70),guest_bedroom.heating.set_temperature(30)}'
+  Parsed  : ['guest_bedroom.heating.set_temperature(82)', 'foyer.aromatherapy.set_intensity(70)', 'guest_bedroom.heating.set_temperature(30)']
+  Expected: ['error_input', 'error_input', 'error_input']
+--------------------
+Success Rate (EM): 0.0000 (0.00%)
+Precision:         0.0617
+Recall:            0.0628
+F1 Score:          0.0622
+--------------------

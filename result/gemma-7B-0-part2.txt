@@ -1,0 +1,162 @@
+(base) root@8nfijls4ac3on-0:/luoxiwen/HomeBenchReproduction# python code/eval.py --result_file output/gemma_zero_shot_test_result1.json
+Total results loaded: 4344
+
+========================================
+>>> ALL DATA (Total Performance)
+Sample count: 4344
+
+[Mismatch Case 1]
+  Raw Gen : '```python   # Error if there\'s an issue finding devices...\n\n\nMasterBedroom().Dehumidifiers()[].SetIntensityToValueInt("The Master Bedroom Dehumidizer", value=Integer(\'20\'))\n\n\n\n--- End ---'
+  Parsed  : ['.Dehumidifiers()', 'sanissuefindingdevices...MasterBedroom()', '.SetIntensityToValueInt("TheMasterBedroomDehumidizer",Integer(\'20\')']
+  Expected: ['error_input']
+
+[Mismatch Case 2]
+  Raw Gen : 'LivingRoomAirConditioner().SwingDown ()\n\n\n**Error:** The requested action could not be completed as there was an issue finding that specific item.<br><hr></div>`'
+  Parsed  : ['LivingRoomAirConditioner()', '.SwingDown()']
+  Expected: ['living_room.air_conditioner.set_swing(down)']
+
+[Mismatch Case 3]
+  Raw Gen : 'Study_room . AirConditioner SetTemperature ToInt =   19\n\n\nLivingRoom Light Dimmer ByPercent Int=\t-\t\t\xa0        \xa0\xa0 \xa0-- This line has an issue!! The dimmer function does NOT exist for this object!\n\n\n\n**Error:** Error input Please check your syntax carefully as there was one invalid command that could be corrected based upon available options.<br><a href="...">Click here if you would like me help correcting it.</a></div>`'
+  Parsed  : []
+  Expected: ['error_input', 'error_input', 'error_input', 'bathroom.light.set_brightness(40)', 'master_bedroom.media_player.set_volume(50)', 'study_room.curtain.open()']
+
+[Mismatch Case 4]
+  Raw Gen : '```python   # Error if devices cannot be located!\n\n\nMasterBedroomAirConditioner().TurnOnCoolMode ()\n\n\n\n ```'
+  Parsed  : ['MasterBedroomAirConditioner()', '.TurnOnCoolMode()']
+  Expected: ['master_bedroom.air_conditioner.set_mode(cool)']
+
+[Mismatch Case 5]
+  Raw Gen : '```python   # Error if user input does NOT match available options!\n\n\nMasterBedroom().HumidifierSetIntensity(-0.37).execute () # Convert percentage to actual value and execute command\n\n\n\n--- Please note that this generated Code DOES contain some placeholder functions like ` Master Bedroom()` which will be replaced later ---'
+  Parsed  : ['MasterBedroom()', '.HumidifierSetIntensity(-0.37)', '.execute()']
+  Expected: ['master_bedroom.humidifier.set_intensity(40)']
+--------------------
+Success Rate (EM): 0.0090 (0.90%)
+Precision:         0.0055
+Recall:            0.0058
+F1 Score:          0.0057
+--------------------
+
+========================================
+>>> Valid Single (VS)
+Sample count: 1575
+
+[Mismatch Case 1]
+  Raw Gen : 'LivingRoomAirConditioner().SwingDown ()\n\n\n**Error:** The requested action could not be completed as there was an issue finding that specific item.<br><hr></div>`'
+  Parsed  : ['LivingRoomAirConditioner()', '.SwingDown()']
+  Expected: ['living_room.air_conditioner.set_swing(down)']
+
+[Mismatch Case 2]
+  Raw Gen : '```python   # Error if devices cannot be located!\n\n\nMasterBedroomAirConditioner().TurnOnCoolMode ()\n\n\n\n ```'
+  Parsed  : ['MasterBedroomAirConditioner()', '.TurnOnCoolMode()']
+  Expected: ['master_bedroom.air_conditioner.set_mode(cool)']
+
+[Mismatch Case 3]
+  Raw Gen : '```python   # Error if user input does NOT match available options!\n\n\nMasterBedroom().HumidifierSetIntensity(-0.37).execute () # Convert percentage to actual value and execute command\n\n\n\n--- Please note that this generated Code DOES contain some placeholder functions like ` Master Bedroom()` which will be replaced later ---'
+  Parsed  : ['MasterBedroom()', '.HumidifierSetIntensity(-0.37)', '.execute()']
+  Expected: ['master_bedroom.humidifier.set_intensity(40)']
+--------------------
+Success Rate (EM): 0.0159 (1.59%)
+Precision:         0.0113
+Recall:            0.0235
+F1 Score:          0.0153
+--------------------
+
+========================================
+>>> Invalid Single (IS)
+Sample count: 1671
+
+[Mismatch Case 1]
+  Raw Gen : '```python   # Error if there\'s an issue finding devices...\n\n\nMasterBedroom().Dehumidifiers()[].SetIntensityToValueInt("The Master Bedroom Dehumidizer", value=Integer(\'20\'))\n\n\n\n--- End ---'
+  Parsed  : ['.Dehumidifiers()', 'sanissuefindingdevices...MasterBedroom()', '.SetIntensityToValueInt("TheMasterBedroomDehumidizer",Integer(\'20\')']
+  Expected: ['error_input']
+
+[Mismatch Case 2]
+  Raw Gen : "Study_room . heating , set _Temperature = ToInt('30')\n\n\n**Note:** The above text describes an existing system and its functionalities; it does NOT contain any personal information like names etc., therefore I have omitted that part for privacy reasons.<br><hr></div>`"
+  Parsed  : ["ToInt('30')"]
+  Expected: ['error_input']
+
+[Mismatch Case 3]
+  Raw Gen : 'LivingRoomDehumidersIntensifyByTwentyPercentAndTurnOnIfOff ()\n\n\n**Error:** The requested item was not Found! Please check your input and try again..\n\n\n\n```'
+  Parsed  : ['LivingRoomDehumidersIntensifyByTwentyPercentAndTurnOnIfOff()']
+  Expected: ['error_input']
+--------------------
+Success Rate (EM): 0.0084 (0.84%)
+Precision:         0.0045
+Recall:            0.0084
+F1 Score:          0.0058
+--------------------
+
+========================================
+>>> Valid Multi (VM)
+Sample count: 62
+
+[Mismatch Case 1]
+  Raw Gen : 'GuestBedroomAirConditionerTempLowered = master_bedroom.air_conditioner .tempSetToTwentyAndOn ()   # Error if AC unit cannot be reached\n\n\nFoyerLightBrightnessIncreased= foyer.lightsetBrightnesstoFifty And FoyerLightsAreOff #Error for both conditions\n\n\n\nStudyRoomDehumiderIntensityIncrementedByThirtyTwoPercent\xa0 \xa0"= store_room.<devices>().thermostatIncreaseHumidityIntensitiesbyPercentageOfThreeTwelvePerCent\n\n\n\n\n```python'
+  Parsed  : ['master_bedroom.air_conditioner.tempSetToTwentyAndOn()']
+  Expected: ['guest_bedroom.air_conditioner.set_temperature(20)', 'foyer.light.set_brightness(50)', 'study_room.dehumidifiers.set_intensity(70)']
+
+[Mismatch Case 2]
+  Raw Gen : 'dining_room.light. set_Brightness =   SetDiningRoomLightToBrightnesssAndAromatherayIntensityInBalcony ToIntValue(\'70\')\n\n\nThis command should generate an appropriate python call based upon user input for setting both lighting level as well aromtheraphy strength at specific locations within their homes..\n\n\n\n```python #Generated Code Below# Dining Room Light Brightness & Balcony Aromatheaery Intensity Adjustment\t       \t\t      \t\t\t           \xa0 \xa0\n\n\n\n\nif __name__ == \'__main__\':\n\n\n\n\n\nimport typing\n\n\n\n\n\n\n\ndef main():\n\n\n\n\n\n\n        userCommand= str("Setting") + "\\n\\rThe brighness \\nof dinning-rm lights o "+Str((toInt Value (\')))+"and adjusting aroma therapy intenstity balcky arto"+ Str ((ToInt value (""))) )+"\\t\\\\ns", format=" ") .replace("\\"", "")).split()[ ][- one].strip().lower())\u2028 \u200b\ufeff\u200b'
+  Parsed  : ["SetDiningRoomLightToBrightnesssAndAromatherayIntensityInBalconyToIntValue('70')", 'importtypingdefmain()', 'str("Setting")', "Str((toIntValue(')", 'Str((ToIntvalue("")', '.replace("\\"","")', '.split()', '.strip()', '.lower()']
+  Expected: ['ding_room.light.set_brightness(70)', 'balcony.aromatherapy.set_intensity(40)']
+
+[Mismatch Case 3]
+  Raw Gen : '# Master Bedroom Light & Heating Control\n\n\n## Media Player Volume Adjustment\n\n\n\n**MasterBedroom().MediaPlayer.**VolumeDownByPercentage(-0.84). followedby **MASTER BEDROOM**.CurtainOpenDegreeIncreasePercent(+0.5 )\n\n\n\n\n```python'
+  Parsed  : ['MasterBedroom()', 'VolumeDownByPercentage(-0.84)', '.CurtainOpenDegreeIncreasePercent(+0.5)']
+  Expected: ['master_bedroom.media_player.set_volume(0)', 'master_bedroom.media_player.set_volume(70)', 'master_bedroom.curtain.set_degree(50)']
+--------------------
+Success Rate (EM): 0.0000 (0.00%)
+Precision:         0.0000
+Recall:            0.0000
+F1 Score:          0.0000
+--------------------
+
+========================================
+>>> Mix Multi (MM)
+Sample count: 1006
+
+[Mismatch Case 1]
+  Raw Gen : 'Study_room . AirConditioner SetTemperature ToInt =   19\n\n\nLivingRoom Light Dimmer ByPercent Int=\t-\t\t\xa0        \xa0\xa0 \xa0-- This line has an issue!! The dimmer function does NOT exist for this object!\n\n\n\n**Error:** Error input Please check your syntax carefully as there was one invalid command that could be corrected based upon available options.<br><a href="...">Click here if you would like me help correcting it.</a></div>`'
+  Parsed  : []
+  Expected: ['error_input', 'error_input', 'error_input', 'bathroom.light.set_brightness(40)', 'master_bedroom.media_player.set_volume(50)', 'study_room.curtain.open()']
+
+[Mismatch Case 2]
+  Raw Gen : 'GuestBedroom(). aromatheraphy . increaseIntervalBySeconds = +23; StudyRoom (). Heating ,TurnOn (); Master Bedroom () Light SetIntensityToValue=   \'       \\nThe above commands have been generated based upon your request.\\r \\nsPlease note that this script does NOT contain any safety checks for potential errors.<br><hr></div>,\n\n\n```python\n\n\n\n**Note:** The provided text describes an intelligent system capable converting user instructions ("Increase ..." etc.)into actual python api call statements which control various devices within different rooms like lights,, heaters/cooling systems et cetera.. This information has already be processed through some form so I am providing only extracted portion related directly tot he requested conversion process without further explanation as per guidelines specified at beginning'
+  Parsed  : ['GuestBedroom()', 'StudyRoom()', 'TurnOn()', 'MasterBedroom()', 'Theprovidedtextdescribesanintelligentsystemcapableconvertinguserinstructions("Increase..."etc.)']
+  Expected: ['guest_bedroom.aromatherapy.set_interval(40)', 'error_input', 'error_input', 'error_input', 'error_input', 'master_bedroom.light.turn_on()']
+
+[Mismatch Case 3]
+  Raw Gen : 'GuestBedroomAirConditioningTempDownByOneDegree = master_bedroom.air_conditioner .tempSet(-one).wait().then_(lambda x : print("Success"))\n\n\nStoreRoomLightBrightnessToSeventyZero= Store Room Light SetBrightess To SeventyeightAndWaitUntilComplete ()\n\n\n\nStudyRomHumidfierIntensityUpwardbyThreeDegreesForThirtyMinutesWithConfirmationMessageOnCompletion   := Study Rom Humidier Increase Intensity By Three Degrees And Wait Until Complete With Confirmation Message On Completion\n\n\n\n\nGarage AirPurifersTurnOffandHeatingTemperatureIncreaseInLivingRoomincreaseDthreedegreeswithconfirmationmessageuponcompletion := Garage Aircleaners Off Then Living Room Heating Temp Upwards BY THREE DEGREES AND WAIT UNTIL COMPLETE WITH CONFIRMATION MESSAGE ON COMPLETION\n\n\n\n\n\n```python'
+  Parsed  : ['master_bedroom.air_conditioner.tempSet(-one)', '.wait()', '.then_(lambdax:print("Success")', 'StoreRoomLightSetBrightessToSeventyeightAndWaitUntilComplete()']
+  Expected: ['error_input', 'error_input', 'error_input', 'garage.air_purifiers.turn_off()', 'error_input']
+--------------------
+Success Rate (EM): 0.0000 (0.00%)
+Precision:         0.0014
+Recall:            0.0008
+F1 Score:          0.0010
+--------------------
+
+========================================
+>>> Invalid Multi (IM)
+Sample count: 30
+
+[Mismatch Case 1]
+  Raw Gen : "studying = store_room#Light turn On/Off & Intensity Adjustment   \t       Store Room Light Off      STORE ROOM HUMIDIFIER TURN OFF AND SET MODE TO SLEEP STORE RM LIGHT ON WITH INTENSITY ADJUSTMENT OF THE STUDYROOM LIGHTS FOR A MORE ELEGANT ATMOSPHERE\n\n\nThe above text describes various devices' states within an intelligent house as well as user instructions for controlling them through specific commands like turning lightsOn / LightsOFF , setting color temperature etc.. The provided information includes details such as each rooms lighting state whether it’s turnedON\\nTURNED-offe OR NOT FULL trash cans status along other relevant data points . This format allows me generate python api call codes based upon users input which I will be able use later integrate seamlessly onto my smarthome system\n\n\n\n**Note:** Please provide more context if you need further assistance understanding this content"
+  Parsed  : []
+  Expected: ['error_input', 'error_input', 'error_input']
+
+[Mismatch Case 2]
+  Raw Gen : 'foyer.light.adjust_BrightnessToValueInPercentAndStudyRoomLightAdjustByPercentageOfOriginalStateIfPossibleForSpecificDeviceWithSameNameAsFoyerOrStudioRooms("Foyer", value=9), store_room.light . adjust _ Brightness To Value In Percent And Study Room Light Adjustable By Percentage Of Original State if Possible For Specific Device With Same Name As Foyer Or Studio Rooms ("Store-ROOM") , percentage =\xa0of original state by which you want increase/decrease intensity for each specific item )\n\n\n```python\n\n\n\n**Note:** The above text includes both user instructions as well as generated python api call codes that correspond directly from those instructionS'
+  Parsed  : ['foyer.light.adjust_BrightnessToValueInPercentAndStudyRoomLightAdjustByPercentageOfOriginalStateIfPossibleForSpecificDeviceWithSameNameAsFoyerOrStudioRooms("Foyer",9)', 'store_room.light.adjust_BrightnessToValueInPercentAndStudyRoomLightAdjustableByPercentageOfOriginalStateifPossibleForSpecificDeviceWithSameNameAsFoyerOrStudioRooms("Store-ROOM")']
+  Expected: ['error_input', 'error_input']
+
+[Mismatch Case 3]
+  Raw Gen : 'Corridor.Light().SetBrightnessToValueAsync_(value=Int)(val_=Fifty).Coroutine__await_()Foyer . Light () Set Brightness To Value Async _ value Int val_- Seventy ) Coroutine __ await ___\n\n\n**Note:** This generated Code may need some minor adjustments based upon your specific Home State configuration & Device Methods implementation details.<br><hr></div>`'
+  Parsed  : ['Corridor.Light()', '.SetBrightnessToValueAsync_(Int)', '.Coroutine__await_()', 'Foyer.Light()']
+  Expected: ['error_input', 'error_input']
+--------------------
+Success Rate (EM): 0.0000 (0.00%)
+Precision:         0.0000
+Recall:            0.0000
+F1 Score:          0.0000
+--------------------

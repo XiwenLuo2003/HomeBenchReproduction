@@ -10,7 +10,24 @@ PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 
 # --- 文本归一化函数 ---
 def normalize_command(text):
+    # Remove key=value pairs, e.g., 'brightness=' from 'brightness=60'
     text = re.sub(r'\b[a-zA-Z_]\w*=', '', text)
+    
+    # Attempt to evaluate simple arithmetic expressions within parentheses
+    def evaluate_arithmetic_params(match):
+        params_str = match.group(1).strip()
+        # Check if the string consists only of numbers, operators, and whitespace
+        if re.fullmatch(r'[\d\s\+\-\*\/\.]+', params_str):
+            try:
+                evaluated_result = eval(params_str)
+                return f"({evaluated_result})"
+            except (SyntaxError, TypeError, NameError):
+                pass # Fallback to original string if evaluation fails
+        return f"({params_str})"
+
+    # Apply arithmetic evaluation to content within parentheses
+    text = re.sub(r'\((.*?)\)', evaluate_arithmetic_params, text)
+    
     return text
 
 # --- 核心解析函数 ---
@@ -110,7 +127,8 @@ def dif_type(result_data):
         "mix_multi": {"expected": [], "generated": []},
         "error_multi": {"expected": [], "generated": []}, # IM
         "unexist_device": {"expected": [], "generated": []},
-        "unexist_attribute": {"expected": [], "generated": []}
+        "unexist_attribute": {"expected": [], "generated": []},
+        "unknown_type": {"expected": [], "generated": []} # 新增：用于捕获未知类型
     }
     
     print(f"Total results loaded: {len(result_data)}")
@@ -118,19 +136,32 @@ def dif_type(result_data):
     for item in result_data:
         gold = item.get("expected", "")
         pred = item.get("generated", "")
-        item_type = item.get("type", "normal")
+        item_type = item.get("type", "unknown") # 默认值修改为 "unknown"
         
         categories["all"]["expected"].append(gold)
         categories["all"]["generated"].append(pred)
         
         # --- 升级版分类逻辑 ---
         
-        # 1. Valid Single (VS)
-        if item_type == "normal":
-            categories["normal_single"]["expected"].append(gold)
-            categories["normal_single"]["generated"].append(pred)
+        # 1. Invalid Multi (IM) - 优先匹配复杂错误类型
+        # 捕获所有 unexist_multi, multi2_unexist_device, multi3_unexist_attribute 等变体，以及以 error 开头的类型
+        if (item_type == "unexist_multi") or \
+           ("multi" in item_type and "unexist" in item_type) or \
+           item_type.startswith("error"):
+            categories["error_multi"]["expected"].append(gold)
+            categories["error_multi"]["generated"].append(pred)
             
-        # 2. Invalid Single (IS)
+        # 2. Mix Multi (MM)
+        elif item_type == "mix_multi":
+            categories["mix_multi"]["expected"].append(gold)
+            categories["mix_multi"]["generated"].append(pred)
+
+        # 3. Valid Multi (VM)
+        elif item_type == "normal_multi":
+             categories["normal_multi"]["expected"].append(gold)
+             categories["normal_multi"]["generated"].append(pred)
+            
+        # 4. Invalid Single (IS)
         elif item_type == "unexist_device":
             categories["unexist_single"]["expected"].append(gold)
             categories["unexist_single"]["generated"].append(pred)
@@ -143,27 +174,13 @@ def dif_type(result_data):
             categories["unexist_attribute"]["expected"].append(gold)
             categories["unexist_attribute"]["generated"].append(pred)
             
-        # 3. Valid Multi (VM)
-        elif item_type == "normal_multi":
-             categories["normal_multi"]["expected"].append(gold)
-             categories["normal_multi"]["generated"].append(pred)
-
-        # 4. Mix Multi (MM)
-        elif item_type == "mix_multi":
-            categories["mix_multi"]["expected"].append(gold)
-            categories["mix_multi"]["generated"].append(pred)
-
-        # 5. Invalid Multi (IM) - 关键修复
-        # 捕获所有 unexist_multi, multi2_unexist_device, multi3_unexist_attribute 等变体
-        elif (item_type == "unexist_multi") or \
-             ("multi" in item_type and "unexist" in item_type) or \
-             ("error" in item_type) or \
-             item_type.startswith("error"):
-            categories["error_multi"]["expected"].append(gold)
-            categories["error_multi"]["generated"].append(pred)
+        # 5. Valid Single (VS) - 明确的 normal 类型
+        elif item_type == "normal":
+            categories["normal_single"]["expected"].append(gold)
+            categories["normal_single"]["generated"].append(pred)
             
         else:
-            # 兼容性分割判断 (兜底)
+            # 兼容性分割判断 (兜底) - 针对可能存在的 multi_mix, multi_normal 等格式
             parts = item_type.split("_")
             if len(parts) > 1:
                 if parts[1] == "mix":
@@ -172,12 +189,17 @@ def dif_type(result_data):
                 elif parts[1] == "normal":
                     categories["normal_multi"]["expected"].append(gold)
                     categories["normal_multi"]["generated"].append(pred)
-                # 任何以 multi 开头且后面跟 unexist 的都算 IM
                 elif parts[0].startswith("multi") and parts[1] == "unexist":
                     categories["error_multi"]["expected"].append(gold)
                     categories["error_multi"]["generated"].append(pred)
                 else:
                     print(f"Warning: Unhandled type '{item_type}'")
+                    categories["unknown_type"]["expected"].append(gold) # 归入未知类型
+                    categories["unknown_type"]["generated"].append(pred)
+            else:
+                print(f"Warning: Unhandled type '{item_type}'")
+                categories["unknown_type"]["expected"].append(gold) # 归入未知类型
+                categories["unknown_type"]["generated"].append(pred)
 
     # --- 执行评估 ---
     print("\n" + "="*40)
@@ -203,6 +225,10 @@ def dif_type(result_data):
     print("\n" + "="*40)
     print(">>> Invalid Multi (IM)")
     compute_accuracy(categories["error_multi"]["generated"], categories["error_multi"]["expected"], debug_limit=3)
+
+    print("\n" + "="*40)
+    print(">>> Unknown Types (for Debugging)") # 新增：打印未知类型
+    compute_accuracy(categories["unknown_type"]["generated"], categories["unknown_type"]["expected"], debug_limit=3)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Model Evaluation Script for HomeBench.")

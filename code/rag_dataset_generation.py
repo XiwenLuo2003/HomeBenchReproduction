@@ -264,7 +264,7 @@ def generate_rag_dataset(model_name, cuda_devices="0"):
             device_method_case = "<device_method>\n     The following provides the methods to control each device in the current household:"+ new_method_str + "\n" + "</device_method>\n"
             
             full_input = system + home_status_case + device_method_case + examples + case_input
-            rag_data.append({"input": full_input, "output": case["output"]})
+            rag_data.append({"input": full_input, "output": case["output"], "type": case.get("type", "normal")}) # 添加 type 字段
             
         except Exception as e:
             print(f"Error processing case {i}: {e}")
